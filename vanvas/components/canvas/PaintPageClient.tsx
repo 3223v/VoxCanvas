@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import RoughCanvas from "@/components/canvas/RoughCanvas";
+import ChatPanel from "@/components/canvas/ChatPanel";
 import SaveDialog from "./SaveDialog";
 import { randomName } from "@/lib/utils";
 
@@ -72,14 +73,17 @@ export default function PaintPageClient({
 
   return (
     <div className="flex-1 flex flex-col p-6 gap-4 overflow-hidden h-full">
-      <div className="flex-1 min-h-0">
-        <RoughCanvas
-          width={canvasWidth} height={canvasHeight}
-          objects={objects} onObjectsChange={setObjects}
-          onCanvasSizeChange={(w, h) => { setCanvasWidth(w); setCanvasHeight(h); }}
-          title={title} canvasId={canvasId}
-          onSaveClick={handleSaveClick} saving={saving}
-        />
+      <div className="flex-1 min-h-0 flex gap-0">
+        <div className="flex-1 min-w-0">
+          <RoughCanvas
+            width={canvasWidth} height={canvasHeight}
+            objects={objects} onObjectsChange={setObjects}
+            onCanvasSizeChange={(w, h) => { setCanvasWidth(w); setCanvasHeight(h); }}
+            title={title} canvasId={canvasId}
+            onSaveClick={handleSaveClick} saving={saving}
+          />
+        </div>
+        <ChatPanel />
       </div>
 
       {showSaveDialog && (
