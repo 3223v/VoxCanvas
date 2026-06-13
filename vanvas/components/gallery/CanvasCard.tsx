@@ -172,5 +172,19 @@ function RenderThumb({ obj }: { obj: DrawObject }) {
     const size=Math.max(obj.w||0,obj.h||0);
     return <circle cx={obj.x!+size/2} cy={obj.y!+size/2} r={size/2} stroke={s} strokeWidth={sw} fill={f} />;
   }
+  if (obj.type === "text" && obj.label) {
+    const fs = (obj.fontSize ?? 16) * 0.7;
+    const lines = obj.label.split("\n");
+    const anchor = obj.textAlign === "center" ? "middle" : obj.textAlign === "right" ? "end" : "start";
+    return (
+      <text x={obj.x ?? 0} y={(obj.y ?? 0) + fs}
+            fontSize={fs} fill={obj.stroke ?? "#1a1a1a"}
+            fontFamily="sans-serif" textAnchor={anchor}>
+        {lines.map((line, i) => (
+          <tspan key={i} x={obj.x ?? 0} dy={i === 0 ? 0 : fs * 1.4}>{line}</tspan>
+        ))}
+      </text>
+    );
+  }
   return null;
 }
