@@ -49,6 +49,20 @@ export default function ChatPanel({ canvasId, onObjectsChange }: ChatPanelProps)
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, asr.status, toast]);
 
+  // Load command history when canvasId changes
+  useEffect(() => {
+    if (!canvasId) {
+      setMessages([]);
+      return;
+    }
+    fetch(`/api/canvas/${canvasId}/commands`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.messages) setMessages(data.messages);
+      })
+      .catch(() => {}); // 静默失败，不影响使用
+  }, [canvasId]);
+
   // Detect "processing → idle" transition: no text → show toast
   useEffect(() => {
     const prev = prevStatusRef.current;
@@ -94,8 +108,8 @@ export default function ChatPanel({ canvasId, onObjectsChange }: ChatPanelProps)
     setSending(true);
 
     try {
-      // 如果有 canvasId，使用 AI 绘图指令接口
       if (canvasId) {
+        // 有 canvasId → AI 绘图指令
         const res = await fetch(`/api/canvas/${canvasId}/command`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -104,16 +118,14 @@ export default function ChatPanel({ canvasId, onObjectsChange }: ChatPanelProps)
         const data = await res.json();
 
         if (!res.ok) {
-          // LLM 配置错误等
           setMessages((prev) => [
             ...prev,
             {
               role: "assistant",
-              content: data.error ?? `AI 绘图失败 (${res.status})`,
+              content: data.error ?? data.hint ?? `AI 绘图失败 (${res.status})`,
             },
           ]);
         } else {
-          // 显示 AI 回复
           const reply = data.response ?? "(无回复)";
           const summary = data.summary as
             | { success: number; failed: number; total: number }
@@ -126,13 +138,12 @@ export default function ChatPanel({ canvasId, onObjectsChange }: ChatPanelProps)
 
           setMessages((prev) => [...prev, { role: "assistant", content }]);
 
-          // 更新画布
           if (data.objects && onObjectsChange) {
             onObjectsChange(data.objects);
           }
         }
       } else {
-        // 回退到旧聊天接口
+        // 无 canvasId → 诊断接口（告知未保存）
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -177,7 +188,7 @@ export default function ChatPanel({ canvasId, onObjectsChange }: ChatPanelProps)
 
       {/* Expanded panel */}
       {open && (
-        <div className="shrink-0 w-[22%] min-w-[220px] max-w-[320px] flex flex-col
+        <div className="shrink-0 w-[26%] min-w-[264px] max-w-[384px] flex flex-col
                         bg-white border border-zinc-200 rounded-l-xl overflow-hidden
                         shadow-sm transition-all duration-300">
           {/* Header */}

@@ -30,6 +30,8 @@ export interface UpdateCanvasInput {
   state?: string;
   version?: number;
   thumbnail?: string | null;
+  canvasWidth?: number;
+  canvasHeight?: number;
 }
 
 const canvasDao = {
@@ -78,6 +80,8 @@ const canvasDao = {
     if (input.state !== undefined) data.state = input.state;
     if (input.version !== undefined) data.version = input.version;
     if (input.thumbnail !== undefined) data.thumbnail = input.thumbnail;
+    if (input.canvasWidth !== undefined) data.canvasWidth = input.canvasWidth;
+    if (input.canvasHeight !== undefined) data.canvasHeight = input.canvasHeight;
 
     db.update(canvases).set(data).where(eq(canvases.id, id)).run();
     return this.getById(id);

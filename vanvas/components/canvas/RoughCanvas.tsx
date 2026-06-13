@@ -26,6 +26,8 @@ interface RoughCanvasProps {
   canvasId: string;
   onSaveClick: () => void;
   saving: boolean;
+  /** 画布重命名回调 */
+  onTitleChange?: (newTitle: string) => void;
 }
 
 function clampZoom(z: number) { return Math.min(5, Math.max(0.1, z)); }
@@ -53,7 +55,7 @@ function hitTestText(obj: DrawObject, px: number, py: number): boolean {
 
 export default function RoughCanvas({
   width, height, objects, onObjectsChange, onCanvasSizeChange,
-  title, canvasId, onSaveClick, saving,
+  title, canvasId, onSaveClick, saving, onTitleChange,
 }: RoughCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -79,8 +81,12 @@ export default function RoughCanvas({
   // ── Inline edit state ──────────────────────────────────
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [editingTextValue, setEditingTextValue] = useState("");
-  // 编辑框的屏幕坐标（相对于 viewport）
   const [editScreenPos, setEditScreenPos] = useState<{ left: number; top: number } | null>(null);
+
+  // ── Title rename state ─────────────────────────────────
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   const buildOpts = useCallback(() => ({
     stroke: strokeColor, strokeWidth,
@@ -497,9 +503,51 @@ export default function RoughCanvas({
         </button>
 
         <div className="flex items-center gap-2 shrink-0">
-          <h1 className="text-sm font-medium text-zinc-800 whitespace-nowrap">
-            {title || "未命名画布"}
-          </h1>
+          {renaming ? (
+            <input
+              ref={renameInputRef}
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  const trimmed = renameValue.trim();
+                  if (trimmed && trimmed !== title) onTitleChange?.(trimmed);
+                  setRenaming(false);
+                }
+                if (e.key === "Escape") setRenaming(false);
+              }}
+              onBlur={() => {
+                const trimmed = renameValue.trim();
+                if (trimmed && trimmed !== title) onTitleChange?.(trimmed);
+                setRenaming(false);
+              }}
+              className="text-sm font-medium text-zinc-800 bg-zinc-100 border border-zinc-300
+                         rounded-md px-2 py-0.5 outline-none focus:border-zinc-400 w-[180px]"
+              autoFocus
+            />
+          ) : (
+            <>
+              <h1 className="text-sm font-medium text-zinc-800 whitespace-nowrap">
+                {title || "未命名画布"}
+              </h1>
+              <button
+                onClick={() => {
+                  setRenameValue(title || "");
+                  setRenaming(true);
+                  setTimeout(() => renameInputRef.current?.select(), 10);
+                }}
+                className="w-5 h-5 flex items-center justify-center rounded
+                           text-zinc-300 hover:text-zinc-500 hover:bg-zinc-100
+                           transition-colors cursor-pointer"
+                title="重命名"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                </svg>
+              </button>
+            </>
+          )}
           {canvasId && (
             <span className="text-[10px] text-zinc-300 bg-zinc-50 px-1.5 py-0.5 rounded border border-zinc-100">
               已保存

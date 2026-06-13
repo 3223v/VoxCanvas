@@ -66,9 +66,31 @@ export default function PaintPageClient({
           <RoughCanvas
             width={canvasWidth} height={canvasHeight}
             objects={objects} onObjectsChange={setObjects}
-            onCanvasSizeChange={(w, h) => { setCanvasWidth(w); setCanvasHeight(h); }}
+            onCanvasSizeChange={async (w, h) => {
+              setCanvasWidth(w);
+              setCanvasHeight(h);
+              // 已保存的画布：立即持久化尺寸变更
+              if (canvasId) {
+                await fetch(`/api/canvas/${canvasId}`, {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ canvasWidth: w, canvasHeight: h }),
+                });
+              }
+            }}
             title={title} canvasId={canvasId}
             onSaveClick={handleSaveClick} saving={saving}
+            onTitleChange={async (newTitle) => {
+              setTitle(newTitle);
+              if (canvasId) {
+                // 已保存的画布：立即持久化到后端
+                await fetch(`/api/canvas/${canvasId}`, {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ title: newTitle }),
+                });
+              }
+            }}
           />
         </div>
         <ChatPanel canvasId={canvasId || undefined} onObjectsChange={setObjects} />
