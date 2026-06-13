@@ -1,36 +1,71 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# VoxCanvas — 语音 + AI 驱动的手绘风格画布
 
-## Getting Started
+一个基于 Next.js 16 的轻量级手绘绘图系统，支持语音输入（ASR）和自然语言指令驱动 AI 自动绘图。
 
-First, run the development server:
+## 快速开始
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.example .env.local    # 编辑 .env.local 填入 API Key
+npm run dev                    # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 环境变量（.env.local）
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+# 语音识别（智谱 GLM-ASR）
+ZHIPU_API_KEY=your-key
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+# AI 绘图（OpenAI 兼容协议，支持 GLM/DeepSeek/OpenAI 等）
+LLM_API_KEY=your-key
+LLM_BASE_URL=https://api.deepseek.com    # 或其他兼容端点
+LLM_MODEL_NAME=deepseek-chat             # 模型名
+```
 
-## Learn More
+## 功能
 
-To learn more about Next.js, take a look at the following resources:
+- **手绘风格绘图** — 基于 Rough.js，支持画笔、直线、箭头、矩形、菱形、圆形、椭圆、文字
+- **语音输入** — GLM-ASR 语音转文字（智谱 API）
+- **AI 绘图** — 自然语言指令自动生成图形（如 "画一个登录框和数据库，箭头连接"）
+- **画布管理** — 保存、重命名、比例切换、SVG 导出、画廊预览
+- **对话面板** — 文本/语音输入 + AI 绘图指令 + 历史记录持久化
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 架构概览
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+用户语音 → ASR → 文本指令
+                    ↓
+┌──────────────────────────────────┐
+│  POST /api/canvas/[id]/command   │
+│  task-generate (LLM #1)          │ ← 意图理解 → 任务 DAG
+│  orchestrator (拓扑排序)          │
+│  handlers (CREATE/MODIFY/DELETE/CONNECT) │
+│  sub-workflows (LLM #2, 需要时)  │ ← 样式细化
+│  → DrawObject[]                  │
+└──────────────────────────────────┘
+                    ↓
+          RoughCanvas 渲染
+```
 
-## Deploy on Vercel
+详细设计文档见 `docs/ai.md`。
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 技术栈
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| 层 | 技术 |
+|---|---|
+| 框架 | Next.js 16 (App Router, Turbopack) |
+| UI | React 19, Tailwind CSS 4 |
+| 绘图 | Rough.js (手绘风格) + Canvas 2D (文字) |
+| 数据库 | SQLite (better-sqlite3) + Drizzle ORM |
+| ASR | 智谱 GLM-ASR-2512 |
+| LLM | OpenAI 兼容协议（DeepSeek / GLM / OpenAI） |
+
+## 文档
+
+| 文档 | 说明 |
+|---|---|
+| `docs/ai.md` | AI 绘图系统完整设计 |
+| `docs/workflow-details.md` | 提示词注入 + 执行机制详解 |
+| `docs/shapes.md` | 各形状的渲染实现方式 |
+| `docs/prompt-optimization.md` | 提示词优化分析与方案 |
+| `docs/glm-asr-2512.md` | 智谱 ASR API 参考 |
