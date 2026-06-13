@@ -28,7 +28,9 @@ export function generateObjectId(): string {
 // ── 边界约束 ──────────────────────────────────────────────
 
 /**
- * 将坐标和尺寸钳制在画布边界内。
+ * 宽松边界约束：只确保对象至少有 20px 在画布内可见。
+ * 允许对象部分溢出画布，信任 AI 的布局决策。
+ * 完全不干预在画布内的坐标。
  */
 export function clampPosition(
   x: number,
@@ -38,10 +40,11 @@ export function clampPosition(
   canvasWidth: number,
   canvasHeight: number
 ): { x: number; y: number } {
-  const margin = 10;
+  // 只钳制极端情况：对象完全不可见（几乎全部在画布外）
+  // 允许最多 80% 溢出，至少保留 20% 可见
   return {
-    x: Math.max(margin, Math.min(x, canvasWidth - w - margin)),
-    y: Math.max(margin, Math.min(y, canvasHeight - h - margin)),
+    x: Math.max(-w + Math.min(w * 0.2, 20), Math.min(x, canvasWidth - Math.min(w * 0.2, 20))),
+    y: Math.max(-h + Math.min(h * 0.2, 20), Math.min(y, canvasHeight - Math.min(h * 0.2, 20))),
   };
 }
 

@@ -45,6 +45,34 @@ function buildSystemPrompt(): string {
 - 越接近 0 越精确，越接近 2 越潦草
 - 大多数情况用 0.5~1.0
 
+## 视觉概念映射（重要！）
+
+根据 visualHint 中的描述选择 fillStyle 和颜色：
+
+### 光照/亮度
+- "亮"/"高光"/"光源"/"明亮" → fillStyle:"solid", fill:浅色(如#f0f4f8或白色系), roughness:0.2
+- "暗"/"阴影"/"背面"/"暗面" → fillStyle:"solid", fill:深色(如#1a1a2e或#2c3e50), roughness:0.4
+- "正面"/"前面" → fillStyle:"solid", fill:标准中间色, roughness:0.3
+- "顶面"/"上面" → fillStyle:"solid", fill:比正面更亮
+- "侧面"/"右面" → fillStyle:"solid", fill:比正面更暗（模拟光照衰减）
+
+### 立体感
+- "立体" / "立方体" / "3D" → fillStyle:"solid"（不是hachure！）
+  通过不同深浅的颜色营造空间感，不是通过纹理
+- "明暗对比" → 分别处理：亮面用浅色solid，暗面用深色solid
+
+### 风格
+- "扁平"/"简约"/"简洁" → hachure 或 无填充，roughness:0.8
+- "手绘"/"草图" → hachure, roughness:1.2
+- "正式"/"专业" → solid, roughness:0.3, 柔和色系
+
+### 颜色语义
+- "蓝色" → fill:#4a90d9 或 #a8d8ff(浅蓝)
+- "红色" → fill:#e03131 或 #ff6b6b(浅红)
+- "绿色" → fill:#2f9e44 或 #b7e4c7(浅绿)
+- "深蓝"/"海军蓝" → fill:#1a3a5c 或 #2c3e50
+- "白色" → fill:#f8f8f8 或 #ffffff
+
 ## 输出格式
 严格输出 JSON Object，不要任何额外文字：
 
