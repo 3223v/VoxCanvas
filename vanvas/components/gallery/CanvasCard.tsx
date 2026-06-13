@@ -4,13 +4,7 @@ import { CanvasDTO } from "@/services/canvas.service";
 import { useState } from "react";
 import CanvasModal from "./CanvasModal";
 
-interface DrawObject {
-  type: string;
-  points?: number[][];
-  x?: number; y?: number; w?: number; h?: number;
-  stroke?: string; strokeWidth?: number;
-  fill?: string; fillStyle?: string;
-}
+import type { DrawObject } from "@/lib/types";
 
 interface CanvasCardProps {
   canvas: CanvasDTO;

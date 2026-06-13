@@ -1,6 +1,6 @@
 "use client";
 
-type Tool = "pen" | "line" | "dashed" | "arrow" | "arc-arrow" | "rect" | "diamond" | "circle" | "ellipse";
+type Tool = "pen" | "line" | "dashed" | "arrow" | "arc-arrow" | "rect" | "diamond" | "circle" | "ellipse" | "text";
 
 interface ToolbarProps {
   activeTool: Tool;
@@ -20,6 +20,7 @@ const TOOLS: { type: Tool; label: string; icon: string }[] = [
   { type: "diamond", label: "菱形", icon: "◇" },
   { type: "circle", label: "圆形", icon: "○" },
   { type: "ellipse", label: "椭圆", icon: "⬭" },
+  { type: "text", label: "文字", icon: "T" },
 ];
 
 export default function Toolbar({ activeTool, onToolChange, onClear, onUndo, canUndo }: ToolbarProps) {

@@ -29,6 +29,8 @@ export async function PUT(
       state: body.state,
       version: body.version,
       thumbnail: body.thumbnail,
+      canvasWidth: body.canvasWidth,
+      canvasHeight: body.canvasHeight,
     });
     if (!canvas) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });

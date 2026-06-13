@@ -2,15 +2,7 @@
 
 import { CanvasDTO } from "@/services/canvas.service";
 
-type FillStyle = "solid" | "hachure" | "cross-hatch" | "dots" | "dashed" | "zigzag";
-
-interface DrawObject {
-  type: "line" | "dashed" | "arrow" | "arc-arrow" | "rect" | "diamond" | "circle" | "ellipse";
-  points?: number[][];
-  x?: number; y?: number; w?: number; h?: number;
-  stroke?: string; strokeWidth?: number; roughness?: number; seed?: number;
-  fill?: string; fillStyle?: FillStyle;
-}
+import type { DrawObject, FillStyle } from "@/lib/types";
 
 interface CanvasModalProps { canvas: CanvasDTO; onClose: () => void; }
 
