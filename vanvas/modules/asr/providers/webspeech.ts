@@ -65,6 +65,9 @@ export function createWebSpeechProvider(): IStreamingProvider {
       };
 
       rec.onerror = (e: SpeechRecognitionErrorEvent) => {
+        // network / not-allowed / service-not-allowed → Google services unreachable, silently ignore
+        // Web Speech is the fast channel; the batch (GLM) channel still records and works
+        if (e.error === "network" || e.error === "not-allowed" || e.error === "service-not-allowed") return;
         if (e.error !== "no-speech") callbacks.onError(new Error(e.error));
       };
 

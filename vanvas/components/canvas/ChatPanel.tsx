@@ -20,8 +20,11 @@ export default function ChatPanel() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [sending, setSending] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const msgsRef = useRef<HTMLDivElement>(null);
+  const prevStatusRef = useRef("idle");
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const asr = useASR({
     lang: "zh-CN",
@@ -29,24 +32,40 @@ export default function ChatPanel() {
     batch: glm,
   });
 
+  // Toast auto-dismiss
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 2000);
+  }, []);
+
   // Auto-scroll messages
   useEffect(() => {
     const el = msgsRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, asr.status]);
+  }, [messages, asr.status, toast]);
 
   // Watch for slow-channel correction: update last user message
   useEffect(() => {
-    if (asr.wasCorrected && asr.status === "idle" && messages.length > 0) {
+    if (asr.wasCorrected && messages.length > 0) {
       setMessages((prev) => {
         const last = prev[prev.length - 1];
-        if (last?.role === "user" && last.content !== asr.text) {
+        if (last?.role === "user" && last.content !== asr.text && asr.text) {
           return [...prev.slice(0, -1), { ...last, content: asr.text, corrected: true }];
         }
         return prev;
       });
     }
-  }, [asr.wasCorrected, asr.status, asr.text, messages.length]);
+  }, [asr.wasCorrected, asr.text, messages.length]);
+
+  // Detect "verifying → idle" transition: no text → show toast
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = asr.status;
+    if (prev === "verifying" && asr.status === "idle" && !asr.text) {
+      showToast("未识别到语音，请重试");
+    }
+  }, [asr.status, asr.text, showToast]);
 
   // ── Cursor-aware insert ──────────────────────────────
 
@@ -56,7 +75,6 @@ export default function ChatPanel() {
     const start = ta.selectionStart;
     const end = ta.selectionEnd;
     setInput((prev) => prev.slice(0, start) + text + prev.slice(end));
-    // Restore cursor after render
     requestAnimationFrame(() => {
       ta.focus();
       ta.selectionStart = ta.selectionEnd = start + text.length;
@@ -128,12 +146,12 @@ export default function ChatPanel() {
             <div className="flex items-center gap-2">
               <span className={`w-2 h-2 rounded-full ${
                 asr.status === "listening" ? "bg-red-400 animate-pulse"
-                : asr.status === "verifying" ? "bg-amber-400"
+                : asr.status === "verifying" || asr.status === "processing" ? "bg-amber-400"
                 : "bg-emerald-400"
               }`} />
               <h3 className="text-sm font-medium text-zinc-700">对话</h3>
               {asr.status === "verifying" && (
-                <span className="text-[10px] text-amber-500">优化中…</span>
+                <span className="text-[10px] text-amber-500">识别中…</span>
               )}
             </div>
             <button
@@ -230,7 +248,7 @@ export default function ChatPanel() {
                 className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-lg
                            transition-all cursor-pointer
                            ${asr.status === "listening"
-                             ? "bg-red-500 text-white hover:bg-red-600"
+                             ? "bg-red-500 text-white hover:bg-red-600 animate-pulse"
                              : "text-zinc-400 hover:text-zinc-600 hover:bg-zinc-200"
                            }
                            disabled:opacity-40 disabled:cursor-not-allowed`}
@@ -267,6 +285,15 @@ export default function ChatPanel() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-4 py-2.5
+                        bg-zinc-800 text-white text-sm rounded-xl shadow-lg
+                        animate-in fade-in slide-in-from-bottom-4 transition-all duration-300">
+          {toast}
         </div>
       )}
     </>
