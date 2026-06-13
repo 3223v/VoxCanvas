@@ -5,20 +5,9 @@ import rough from "roughjs";
 import Toolbar from "./Toolbar";
 import AspectRatioPicker from "./AspectRatioPicker";
 
-type Tool = "pen" | "line" | "dashed" | "arrow" | "arc-arrow" | "rect" | "diamond" | "circle" | "ellipse";
-type FillStyle = "solid" | "hachure" | "cross-hatch" | "dots" | "dashed" | "zigzag";
+import type { DrawObject, FillStyle } from "@/lib/types";
 
-interface DrawObject {
-  type: "line" | "dashed" | "arrow" | "arc-arrow" | "rect" | "diamond" | "circle" | "ellipse";
-  points?: number[][];
-  x?: number; y?: number; w?: number; h?: number;
-  stroke?: string;
-  strokeWidth?: number;
-  roughness?: number;
-  seed?: number;
-  fill?: string;
-  fillStyle?: FillStyle;
-}
+type Tool = "pen" | "line" | "dashed" | "arrow" | "arc-arrow" | "rect" | "diamond" | "circle" | "ellipse" | "text";
 
 const COLORS = ["#1a1a1a","#e03131","#1971c2","#2f9e44","#f08c00","#9c36b5","#c92a2a","#495057"];
 const WIDTHS = [1,2,4,6,8];
@@ -41,12 +30,35 @@ interface RoughCanvasProps {
 
 function clampZoom(z: number) { return Math.min(5, Math.max(0.1, z)); }
 
+/** 检测点击是否落在文字对象的包围盒内 */
+function hitTestText(obj: DrawObject, px: number, py: number): boolean {
+  if (obj.type !== "text" || !obj.label) return false;
+  const fontSize = obj.fontSize ?? 16;
+  const lines = obj.label.split("\n");
+  // 字符宽度粗略估算：中文字符 ~= fontSize，英文 ~= fontSize * 0.6
+  const maxLineWidth = Math.max(...lines.map((l) => {
+    let w = 0;
+    for (const ch of l) {
+      w += /[一-鿿]/.test(ch) ? fontSize : fontSize * 0.6;
+    }
+    return w;
+  }));
+  const tw = Math.max(maxLineWidth, 40);
+  const th = lines.length * fontSize * 1.4;
+  return (
+    px >= (obj.x ?? 0) && px <= (obj.x ?? 0) + tw &&
+    py >= (obj.y ?? 0) && py <= (obj.y ?? 0) + th
+  );
+}
+
 export default function RoughCanvas({
   width, height, objects, onObjectsChange, onCanvasSizeChange,
   title, canvasId, onSaveClick, saving,
 }: RoughCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const editInputRef = useRef<HTMLTextAreaElement>(null);
+
   const drawingRef = useRef(false);
   const [activeTool, setActiveTool] = useState<Tool>("pen");
   const [zoom, setZoom] = useState(1);
@@ -57,11 +69,34 @@ export default function RoughCanvas({
   const currentStrokeRef = useRef<number[][]>([]);
   const startPointRef = useRef<[number, number]>([0, 0]);
 
+  // ── Selection + drag state ─────────────────────────────
+  const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+  const isDraggingRef = useRef(false);
+  const dragOffsetRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
+  const lastClickTimeRef = useRef(0);
+  const lastClickTargetRef = useRef<string | null>(null);
+
+  // ── Inline edit state ──────────────────────────────────
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const [editingTextValue, setEditingTextValue] = useState("");
+  // 编辑框的屏幕坐标（相对于 viewport）
+  const [editScreenPos, setEditScreenPos] = useState<{ left: number; top: number } | null>(null);
+
   const buildOpts = useCallback(() => ({
     stroke: strokeColor, strokeWidth,
     roughness: 0.5, seed: Math.floor(Math.random() * 100),
     ...(fillStyle ? { fill: fillColor, fillStyle } : {}),
   }), [strokeColor, strokeWidth, fillColor, fillStyle]);
+
+  // ── Deselect when switching away from text tool ────────
+  const handleToolChange = useCallback((tool: Tool) => {
+    setActiveTool(tool);
+    if (tool !== "text") {
+      setSelectedObjectId(null);
+      setEditingTextId(null);
+      setEditScreenPos(null);
+    }
+  }, []);
 
   // ── Redraw ────────────────────────────────────────────
 
@@ -111,7 +146,6 @@ export default function RoughCanvas({
         const dx = p1[0]-p0[0], dy = p1[1]-p0[1];
         const dist = Math.hypot(dx, dy);
         const offset = dist * 0.25;
-        // Control point perpendicular to the line
         const cpx = mx - dy / dist * offset;
         const cpy = my + dx / dist * offset;
         const curvePts: [number,number][] = [];
@@ -124,7 +158,6 @@ export default function RoughCanvas({
         }
         for (let i = 1; i < curvePts.length; i++)
           rc.line(curvePts[i-1][0], curvePts[i-1][1], curvePts[i][0], curvePts[i][1], opts);
-        // Arrowhead at p1
         const prev = curvePts[curvePts.length - 2];
         const angle = Math.atan2(p1[1]-prev[1], p1[0]-prev[0]);
         const hl = Math.max(10, sw * 6), ha = Math.PI / 7;
@@ -144,8 +177,44 @@ export default function RoughCanvas({
         const size = Math.max(obj.w || 0, obj.h || 0);
         rc.circle(obj.x!+size/2, obj.y!+size/2, size, opts);
       }
+
+      // ── Text rendering (Canvas native) ──
+      if (obj.type === "text" && obj.label) {
+        const fontSize = obj.fontSize ?? 16;
+        ctx.font = `${fontSize}px sans-serif`;
+        ctx.fillStyle = obj.stroke ?? "#1a1a1a";
+        ctx.textAlign = (obj.textAlign as CanvasTextAlign) ?? "left";
+        ctx.textBaseline = "top";
+        const tx = obj.x ?? 0;
+        const ty = obj.y ?? 0;
+        const lines = obj.label.split("\n");
+        lines.forEach((line, i) => {
+          ctx.fillText(line, tx, ty + i * (fontSize * 1.4));
+        });
+      }
+
+      // ── Selection indicator (dashed border around selected text) ──
+      if (obj.type === "text" && obj.id === selectedObjectId && obj.label) {
+        const fontSize = obj.fontSize ?? 16;
+        const lines = obj.label.split("\n");
+        let maxW = 0;
+        for (const l of lines) {
+          let w = 0;
+          for (const ch of l) {
+            w += /[一-鿿]/.test(ch) ? fontSize : fontSize * 0.6;
+          }
+          if (w > maxW) maxW = w;
+        }
+        const tw = Math.max(maxW, 40);
+        const th = lines.length * fontSize * 1.4;
+        ctx.strokeStyle = "#3b82f6";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect((obj.x ?? 0) - 2, (obj.y ?? 0) - 2, tw + 4, th + 4);
+        ctx.setLineDash([]);
+      }
     }
-  }, [objects, width, height]);
+  }, [objects, width, height, selectedObjectId]);
 
   useEffect(() => { redraw(); }, [redraw]);
 
@@ -167,6 +236,19 @@ export default function RoughCanvas({
     else { cx = e.clientX; cy = e.clientY; }
     return [(cx - r.left) * sx, (cy - r.top) * sy];
   };
+
+  /** 计算 canvas 坐标对应的屏幕像素坐标（相对于 viewport） */
+  const canvasToScreen = useCallback((cx: number, cy: number): { left: number; top: number } => {
+    const c = canvasRef.current;
+    const vp = viewportRef.current;
+    if (!c || !vp) return { left: cx, top: cy };
+    const r = c.getBoundingClientRect();
+    const vpr = vp.getBoundingClientRect();
+    return {
+      left: r.left - vpr.left + (cx / width) * r.width + vp.scrollLeft,
+      top: r.top - vpr.top + (cy / height) * r.height + vp.scrollTop,
+    };
+  }, [width, height]);
 
   const drawShapePreview = (tool: Tool, pos: [number, number]) => {
     const canvas = canvasRef.current; if (!canvas) return;
@@ -190,7 +272,6 @@ export default function RoughCanvas({
       const mx=(x1+x2)/2, my=(y1+y2)/2, dist=Math.hypot(x2-x1,y2-y1);
       const offset=dist*0.25, cpx=mx-(y2-y1)/dist*offset, cpy=my+(x2-x1)/dist*offset;
       ctx.beginPath(); ctx.moveTo(x1,y1); ctx.quadraticCurveTo(cpx,cpy,x2,y2); ctx.stroke();
-      // arrowhead tip
       const t = 0.95;
       const bx=(1-t)*(1-t)*x1+2*(1-t)*t*cpx+t*t*x2, by=(1-t)*(1-t)*y1+2*(1-t)*t*cpy+t*t*y2;
       const ang=Math.atan2(y2-by,x2-bx);
@@ -207,6 +288,64 @@ export default function RoughCanvas({
   const handlePointerDown = (e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     const pos = getPos(e);
+
+    // ── Text tool ────────────────────────────────────────
+    if (activeTool === "text") {
+      const clickedText = objects.find((obj) => hitTestText(obj, pos[0], pos[1]));
+
+      if (clickedText) {
+        const now = Date.now();
+        const isDoubleClick =
+          now - lastClickTimeRef.current < 350 &&
+          lastClickTargetRef.current === clickedText.id;
+
+        lastClickTimeRef.current = now;
+        lastClickTargetRef.current = clickedText.id ?? null;
+
+        if (isDoubleClick) {
+          // 双击 → 原地编辑
+          setSelectedObjectId(clickedText.id ?? null);
+          setEditingTextId(clickedText.id ?? null);
+          setEditingTextValue(clickedText.label ?? "");
+          const screenPos = canvasToScreen(clickedText.x ?? pos[0], clickedText.y ?? pos[1]);
+          setEditScreenPos(screenPos);
+        } else {
+          // 单击 → 选中，准备拖动
+          setSelectedObjectId(clickedText.id ?? null);
+          setEditingTextId(null);
+          setEditScreenPos(null);
+          isDraggingRef.current = true;
+          dragOffsetRef.current = {
+            dx: pos[0] - (clickedText.x ?? 0),
+            dy: pos[1] - (clickedText.y ?? 0),
+          };
+        }
+        return;
+      }
+
+      // 点击空白 → 取消选中，创建新文字
+      setSelectedObjectId(null);
+      setEditingTextId(null);
+      setEditScreenPos(null);
+      const newId = `text_${Date.now()}`;
+      const newObj: DrawObject = {
+        id: newId, type: "text", x: pos[0], y: pos[1],
+        label: "", fontSize: 16, stroke: strokeColor, textAlign: "left",
+      };
+      onObjectsChange([...objects, newObj]);
+      setSelectedObjectId(newId);
+      setEditingTextId(newId);
+      setEditingTextValue("");
+      const screenPos = canvasToScreen(pos[0], pos[1]);
+      setEditScreenPos(screenPos);
+      return;
+    }
+
+    // ── Non-text tools: deselect text ────────────────────
+    setSelectedObjectId(null);
+    setEditingTextId(null);
+    setEditScreenPos(null);
+
     drawingRef.current = true;
     startPointRef.current = [pos[0], pos[1]];
     if (activeTool === "pen") currentStrokeRef.current = [pos];
@@ -214,6 +353,19 @@ export default function RoughCanvas({
 
   const handlePointerMove = (e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
+
+    // ── Text tool: drag selected text ────────────────────
+    if (activeTool === "text" && isDraggingRef.current && selectedObjectId) {
+      const pos = getPos(e);
+      const newX = pos[0] - dragOffsetRef.current.dx;
+      const newY = pos[1] - dragOffsetRef.current.dy;
+      const updated = objects.map((obj) =>
+        obj.id === selectedObjectId ? { ...obj, x: newX, y: newY } : obj
+      );
+      onObjectsChange(updated);
+      return;
+    }
+
     if (!drawingRef.current) return;
     const pos = getPos(e);
     if (activeTool === "pen") {
@@ -231,6 +383,12 @@ export default function RoughCanvas({
   };
 
   const handlePointerUp = (e: React.MouseEvent | React.TouchEvent) => {
+    // ── End text drag ────────────────────────────────────
+    if (activeTool === "text" && isDraggingRef.current) {
+      isDraggingRef.current = false;
+      return;
+    }
+
     if (!drawingRef.current) return;
     drawingRef.current = false;
     const tool = activeTool;
@@ -284,13 +442,46 @@ export default function RoughCanvas({
   const handleClear = () => onObjectsChange([]);
   const handleUndo = () => { if (objects.length > 0) onObjectsChange(objects.slice(0, -1)); };
 
+  // ── Text editing commit / cancel ──────────────────────
+
+  useEffect(() => {
+    if (editingTextId && editInputRef.current) {
+      editInputRef.current.focus();
+      editInputRef.current.select();
+    }
+  }, [editingTextId]);
+
+  const commitTextEdit = useCallback(() => {
+    if (!editingTextId) return;
+    const updated = objects.map((obj) =>
+      obj.id === editingTextId
+        ? { ...obj, label: editingTextValue || "文字" }
+        : obj
+    );
+    onObjectsChange(updated);
+    setEditingTextId(null);
+    setEditingTextValue("");
+    setEditScreenPos(null);
+  }, [editingTextId, editingTextValue, objects, onObjectsChange]);
+
+  const cancelTextEdit = useCallback(() => {
+    const target = objects.find((o) => o.id === editingTextId);
+    // 如果文字对象没有内容且是本次会话新建的，删除它
+    if (target && !target.label) {
+      onObjectsChange(objects.filter((o) => o.id !== editingTextId));
+      setSelectedObjectId(null);
+    }
+    setEditingTextId(null);
+    setEditingTextValue("");
+    setEditScreenPos(null);
+  }, [editingTextId, objects, onObjectsChange]);
+
   // ── Render ────────────────────────────────────────────
 
   return (
     <div className="flex flex-col gap-3 h-full">
-      {/* Row 1: [Save] [Title] [AspectRatio] [Toolbar] [spacer] */}
+      {/* Row 1 */}
       <div className="flex items-center gap-3 flex-wrap shrink-0">
-        {/* Save button */}
         <button
           onClick={onSaveClick}
           disabled={saving}
@@ -305,7 +496,6 @@ export default function RoughCanvas({
           )}
         </button>
 
-        {/* Canvas name */}
         <div className="flex items-center gap-2 shrink-0">
           <h1 className="text-sm font-medium text-zinc-800 whitespace-nowrap">
             {title || "未命名画布"}
@@ -317,10 +507,9 @@ export default function RoughCanvas({
           )}
         </div>
 
-        {/* Aspect ratio + Toolbar adjacent on the left */}
         <AspectRatioPicker width={width} height={height} onChange={onCanvasSizeChange} />
         <Toolbar
-          activeTool={activeTool} onToolChange={setActiveTool}
+          activeTool={activeTool} onToolChange={handleToolChange}
           onClear={handleClear} onUndo={handleUndo} canUndo={objects.length > 0}
         />
 
@@ -384,18 +573,74 @@ export default function RoughCanvas({
 
       {/* Canvas viewport */}
       <div ref={viewportRef}
-        className="flex-1 min-h-0 overflow-auto bg-zinc-100/50 rounded-xl border border-zinc-200"
+        className="flex-1 min-h-0 overflow-auto bg-zinc-100/50 rounded-xl border border-zinc-200 relative"
         onWheel={handleWheel}>
         <div className="flex items-center justify-center min-h-full p-4">
           <canvas ref={canvasRef}
             width={width} height={height}
             style={{ width: width*zoom, height: height*zoom }}
-            className="bg-white shadow-sm border border-zinc-200 touch-none cursor-crosshair shrink-0"
+            className={`bg-white shadow-sm border border-zinc-200 touch-none shrink-0 ${activeTool === "text" ? "cursor-default" : "cursor-crosshair"}`}
             onMouseDown={handlePointerDown} onMouseMove={handlePointerMove}
             onMouseUp={handlePointerUp} onMouseLeave={handlePointerUp}
             onTouchStart={handlePointerDown} onTouchMove={handlePointerMove}
             onTouchEnd={handlePointerUp} />
         </div>
+
+        {/* Inline text editing overlay — positioned at text screen location */}
+        {editingTextId && editScreenPos && (
+          <div
+            className="absolute z-20"
+            style={{ left: editScreenPos.left, top: editScreenPos.top }}
+          >
+            <textarea
+              ref={editInputRef}
+              value={editingTextValue}
+              onChange={(e) => setEditingTextValue(e.target.value)}
+              placeholder="输入文字…"
+              rows={Math.max(2, (editingTextValue.match(/\n/g) || []).length + 1)}
+              className="resize-none bg-white/95 border-2 border-blue-400 rounded-lg
+                         px-2 py-1 text-sm text-zinc-700 outline-none
+                         shadow-lg min-w-[120px] max-w-[360px]
+                         placeholder:text-zinc-300"
+              style={{ fontSize: 16, fontFamily: "sans-serif" }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  commitTextEdit();
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  cancelTextEdit();
+                }
+              }}
+              onBlur={() => {
+                // 延迟执行，让按钮点击事件先触发
+                setTimeout(() => {
+                  if (editingTextId) commitTextEdit();
+                }, 150);
+              }}
+            />
+            <div className="flex items-center gap-1 mt-1">
+              <button
+                onMouseDown={(e) => { e.preventDefault(); commitTextEdit(); }}
+                className="px-2 py-0.5 text-[11px] rounded bg-blue-500 text-white
+                           hover:bg-blue-600 transition-colors cursor-pointer"
+              >
+                确定
+              </button>
+              <button
+                onMouseDown={(e) => { e.preventDefault(); cancelTextEdit(); }}
+                className="px-2 py-0.5 text-[11px] rounded bg-white border border-zinc-200
+                           text-zinc-500 hover:bg-zinc-50 transition-colors cursor-pointer"
+              >
+                取消
+              </button>
+              <span className="text-[10px] text-zinc-300 ml-1">
+                Enter 确认 · Esc 取消
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Zoom bar */}

@@ -34,22 +34,20 @@ API Routes (app/api/*)
 
 ### Canvas Data Model
 
-Canvas state is stored as a JSON string in `canvases.state`: `{"objects": [...]}`. Each object has a `type` (line/dashed/arrow/arc-arrow/rect/diamond/circle/ellipse), geometry, and style properties (stroke, fill, roughness, fillStyle). The `commands` and `tasks` tables are designed for the planned AI task-generate workflow but are not yet wired into the API.
+Canvas state is stored as a JSON string in `canvases.state`: `{"objects": [...]}`. Each object has a `type` (line/dashed/arrow/arc-arrow/rect/diamond/circle/ellipse/text), geometry, and style properties. Shared type definitions are in `lib/types/draw-object.ts`. See `docs/shapes.md` for how each shape is rendered.
 
 ### Rendering
 
-- **Rough.js** (`roughjs` package) renders all canvas objects with a hand-drawn aesthetic.
-- The canvas is an HTML `<canvas>` element; Rough.js draws onto it imperatively.
-- Gallery previews and the modal use inline SVG (`<svg>` + `<path>`, `<rect>`, etc.) to render the same objects without Rough.js — fill styles use SVG `<pattern>` definitions for hachure/cross-hatch/dots.
+- **Rough.js** renders geometric shapes (rect/diamond/circle/ellipse) via its built-in APIs. Lines/arrows/dashed/arc-arrow use `rc.line()` with custom geometry calculations. **Text** uses Canvas native `ctx.fillText()` — Rough.js does not support text. See `docs/shapes.md` for details.
+- Gallery previews and the modal use inline SVG (`<svg>` + `<path>`, `<rect>`, etc.) — fill styles use SVG `<pattern>` definitions for hachure/cross-hatch/dots.
 
 ### ASR (Automatic Speech Recognition)
 
-Located in `modules/asr/`. A dual-channel architecture:
+Located in `modules/asr/`. **Single-channel GLM-ASR** (Web Speech fast channel removed due to network issues):
 
-1. **Fast channel (Web Speech API)** — `providers/webspeech.ts`: browser-native speech recognition for real-time streaming. Used via `IStreamingProvider` interface.
-2. **Slow channel (GLM-ASR)** — `providers/glm-asr.ts`: sends recorded audio blob to `/api/asr` which proxies to ZhiPu (智谱) GLM-ASR-2512 API. Used via `IBatchProvider` interface. Converts browser audio to 16kHz mono WAV before sending.
-3. **`use-asr.ts`** — React hook orchestrating both channels. Records via `MediaRecorder`, runs Web Speech concurrently, then after stopping fires the batch channel asynchronously. If the batch result differs, it silently replaces the text and sets `wasCorrected = true`.
-4. **`/api/asr/route.ts`** — server-side proxy to ZhiPu API (requires `ZHIPU_API_KEY` env var). Validates WAV headers before forwarding.
+1. **`use-asr.ts`** — React hook: records via `MediaRecorder` → sends audio blob to GLM batch provider → returns text. Statuses: idle → listening → processing → idle.
+2. **`providers/glm-asr.ts`** — Client-side: converts browser audio (webm) to 16kHz mono WAV, POSTs to `/api/asr`.
+3. **`/api/asr/route.ts`** — Server-side proxy to ZhiPu GLM-ASR-2512 (requires `ZHIPU_API_KEY`).
 
 ### Page Structure (App Router)
 
@@ -62,23 +60,47 @@ Located in `modules/asr/`. A dual-channel architecture:
 
 ### Key Components
 
-- **`RoughCanvas`** — the core drawing component. Manages pointer events, drawing state, tool selection, zoom, undo, and redraw via Rough.js. Receives `objects` array and `onObjectsChange` callback as controlled props.
-- **`PaintPageClient`** — orchestrates canvas + save dialog + chat panel. Owns the `objects` state, save logic (POST/PUT to `/api/canvas`).
-- **`ChatPanel`** — collapsible side panel with text chat + voice input button. Uses `useASR` hook. Sends messages to `/api/chat` (currently a stub).
-- **`Sidebar`** — collapsible left nav with links to Home, My, Paint.
-- **`CanvasCard`** / **`CanvasModal`** — gallery card with SVG thumbnail preview and modal with SVG export.
+- **`RoughCanvas`** — core drawing. Pointer events, drawing state, tool selection (pen/line/dashed/arrow/arc-arrow/rect/diamond/circle/ellipse/text), zoom, undo. Receives `objects` and `onObjectsChange`.
+- **`PaintPageClient`** — orchestrates canvas + save dialog + chat panel. Routes AI commands to `/api/canvas/[id]/command` when canvasId is available.
+- **`ChatPanel`** — collapsible side panel with text chat + voice input (GLM-ASR). Routes messages to command API for AI drawing, falls back to `/api/chat` stub when no canvasId.
+- **`Sidebar`** — collapsible left nav.
+- **`CanvasCard`** / **`CanvasModal`** — gallery with SVG thumbnail + SVG export.
 
-### Chat API Status
+### AI Drawing Pipeline
 
-`/api/chat` is a **stub** — it echoes the user's message with a hardcoded reply. The AI drawing orchestration (`docs/task-generate.md`) is fully designed but not yet implemented.
+Fully implemented (see `docs/ai.md` for design, `docs/shapes.md` for rendering):
+
+```
+ChatPanel → POST /api/canvas/[id]/command { message }
+  → loadSession (DB)
+  → taskGenerate (LLM #1: intent → TaskPlan DAG)
+  → runOrchestrator (toposort → serial layers)
+    → createHandler / modifyHandler / deleteHandler / connectHandler
+      → sub-workflow (LLM #2: style refinement, only when needed)
+      → DrawObject assembled
+  → persist (commands + tasks tables)
+  → return { response, objects[] }
+→ frontend: setObjects() → RoughCanvas full redraw
+```
+
+Key files:
+- `lib/llm/` — OpenAI-compatible provider (env: LLM_API_KEY, LLM_BASE_URL, LLM_MODEL_NAME)
+- `lib/workflow/task-generate.ts` — Layer 1 LLM: intent → task DAG
+- `lib/workflow/sub-workflows/` — Layer 2 LLM: style refinement
+- `lib/orchestrator/orchestrator.ts` — DAG execution engine
+- `lib/handlers/` — 4 handlers (CREATE/MODIFY/DELETE/CONNECT)
+- `app/api/canvas/[id]/command/route.ts` — API entry point
 
 ## Environment Variables
 
-```
-ZHIPU_API_KEY=...   # Required for GLM-ASR voice recognition
-```
+Set in `.env.local` (gitignored). See `.env.example` for template.
 
-Set in `.env.local` (gitignored). Without it, ASR falls back to browser Web Speech API only.
+```bash
+ZHIPU_API_KEY=...     # Required for GLM-ASR voice recognition
+LLM_API_KEY=...        # Required for AI drawing (LLM provider)
+LLM_BASE_URL=...       # Required — OpenAI-compatible endpoint
+LLM_MODEL_NAME=...     # Required — model name (e.g. glm-4-flash)
+```
 
 ## Tech Stack
 

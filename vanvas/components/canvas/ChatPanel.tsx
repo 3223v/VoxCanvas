@@ -2,20 +2,25 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useASR } from "@/modules/asr/use-asr";
-import { createWebSpeechProvider } from "@/modules/asr/providers/webspeech";
 import { createGLMBatchProvider } from "@/modules/asr/providers/glm-asr";
+import type { DrawObject } from "@/lib/types";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
-  corrected?: boolean;
 }
 
-const webspeech = createWebSpeechProvider();
+interface ChatPanelProps {
+  /** 当前画布 id（有值时启用 AI 绘图指令） */
+  canvasId?: string;
+  /** 画布 objects 变更回调 */
+  onObjectsChange?: (objects: DrawObject[]) => void;
+}
+
 const glm = createGLMBatchProvider();
 const BARS = 24;
 
-export default function ChatPanel() {
+export default function ChatPanel({ canvasId, onObjectsChange }: ChatPanelProps) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -28,7 +33,6 @@ export default function ChatPanel() {
 
   const asr = useASR({
     lang: "zh-CN",
-    streaming: webspeech,
     batch: glm,
   });
 
@@ -45,24 +49,11 @@ export default function ChatPanel() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, asr.status, toast]);
 
-  // Watch for slow-channel correction: update last user message
-  useEffect(() => {
-    if (asr.wasCorrected && messages.length > 0) {
-      setMessages((prev) => {
-        const last = prev[prev.length - 1];
-        if (last?.role === "user" && last.content !== asr.text && asr.text) {
-          return [...prev.slice(0, -1), { ...last, content: asr.text, corrected: true }];
-        }
-        return prev;
-      });
-    }
-  }, [asr.wasCorrected, asr.text, messages.length]);
-
-  // Detect "verifying → idle" transition: no text → show toast
+  // Detect "processing → idle" transition: no text → show toast
   useEffect(() => {
     const prev = prevStatusRef.current;
     prevStatusRef.current = asr.status;
-    if (prev === "verifying" && asr.status === "idle" && !asr.text) {
+    if (prev === "processing" && asr.status === "idle" && !asr.text) {
       showToast("未识别到语音，请重试");
     }
   }, [asr.status, asr.text, showToast]);
@@ -101,16 +92,64 @@ export default function ChatPanel() {
     const userMsg: Message = { role: "user", content: msg };
     setMessages((prev) => [...prev, userMsg]);
     setSending(true);
+
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg }),
-      });
-      const data = await res.json();
-      setMessages((prev) => [...prev, { role: "assistant", content: data.reply || "(无回复)" }]);
-    } catch {
-      setMessages((prev) => [...prev, { role: "assistant", content: "发送失败，请重试。" }]);
+      // 如果有 canvasId，使用 AI 绘图指令接口
+      if (canvasId) {
+        const res = await fetch(`/api/canvas/${canvasId}/command`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg }),
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          // LLM 配置错误等
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              content: data.error ?? `AI 绘图失败 (${res.status})`,
+            },
+          ]);
+        } else {
+          // 显示 AI 回复
+          const reply = data.response ?? "(无回复)";
+          const summary = data.summary as
+            | { success: number; failed: number; total: number }
+            | undefined;
+
+          let content = reply;
+          if (summary) {
+            content += `\n\n---\n✅ ${summary.success} / ❌ ${summary.failed} / 📋 ${summary.total}`;
+          }
+
+          setMessages((prev) => [...prev, { role: "assistant", content }]);
+
+          // 更新画布
+          if (data.objects && onObjectsChange) {
+            onObjectsChange(data.objects);
+          }
+        }
+      } else {
+        // 回退到旧聊天接口
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg }),
+        });
+        const data = await res.json();
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: data.reply || "(无回复)" },
+        ]);
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "发送失败";
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `❌ ${errorMsg}` },
+      ]);
     } finally {
       setSending(false);
     }
@@ -146,11 +185,11 @@ export default function ChatPanel() {
             <div className="flex items-center gap-2">
               <span className={`w-2 h-2 rounded-full ${
                 asr.status === "listening" ? "bg-red-400 animate-pulse"
-                : asr.status === "verifying" || asr.status === "processing" ? "bg-amber-400"
+                : asr.status === "processing" ? "bg-amber-400"
                 : "bg-emerald-400"
               }`} />
               <h3 className="text-sm font-medium text-zinc-700">对话</h3>
-              {asr.status === "verifying" && (
+              {asr.status === "processing" && (
                 <span className="text-[10px] text-amber-500">识别中…</span>
               )}
             </div>
@@ -182,9 +221,6 @@ export default function ChatPanel() {
                     : "bg-zinc-100 text-zinc-700 rounded-bl-md"
                   }`}>
                   {m.content}
-                  {m.corrected && (
-                    <span className="ml-1 text-[9px] text-emerald-300" title="已由慢通道纠正">✓</span>
-                  )}
                 </div>
               </div>
             ))}

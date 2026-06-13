@@ -7,19 +7,7 @@ import ChatPanel from "@/components/canvas/ChatPanel";
 import SaveDialog from "./SaveDialog";
 import { randomName } from "@/lib/utils";
 
-type FillStyle = "solid" | "hachure" | "cross-hatch" | "dots" | "dashed" | "zigzag";
-
-interface DrawObject {
-  type: "line" | "dashed" | "arrow" | "arc-arrow" | "rect" | "diamond" | "circle" | "ellipse";
-  points?: number[][];
-  x?: number; y?: number; w?: number; h?: number;
-  stroke?: string;
-  strokeWidth?: number;
-  roughness?: number;
-  seed?: number;
-  fill?: string;
-  fillStyle?: FillStyle;
-}
+import type { DrawObject } from "@/lib/types";
 
 interface PaintPageClientProps {
   initialId?: string;
@@ -83,7 +71,7 @@ export default function PaintPageClient({
             onSaveClick={handleSaveClick} saving={saving}
           />
         </div>
-        <ChatPanel />
+        <ChatPanel canvasId={canvasId || undefined} onObjectsChange={setObjects} />
       </div>
 
       {showSaveDialog && (
