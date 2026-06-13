@@ -1,8 +1,10 @@
 /**
- * task-generate — 第一层 LLM 工作流。
+ * task-generate — 第一层 LLM 工作流（增强版）。
  *
  * 职责：理解用户意图 → 拆解为任务 DAG → 生成自然语言回复。
  * 只负责"对象识别 + 关系判断"，不负责"视觉呈现"。
+ *
+ * v2 改进：6 个 few-shot 示例、空间布局算法、CoT 推理指引、错误处理分支。
  */
 import type { ILLMProvider } from "@/lib/llm";
 import type {
@@ -22,132 +24,320 @@ import { logger } from "@/lib/logger";
 // ── System Prompt ──────────────────────────────────────────
 
 function buildSystemPrompt(input: TaskGenerateInput): string {
-  const { canvasWidth, canvasHeight } = input.canvasState.meta;
-  const objectCount = input.canvasState.objects.length;
+  const { canvasWidth: W, canvasHeight: H } = input.canvasState.meta;
+  const N = input.canvasState.objects.length;
 
-  return `你是一个绘图指令规划器。你的任务是将用户的自然语言绘图需求分解为一组可执行的任务节点（DAG）。
+  return `你是一个绘图指令规划器。将用户的自然语言绘图需求分解为可执行的任务 DAG。
 
 ## 画布信息
-- 坐标系：原点 (0,0) 在左上角，X 轴向右为正，Y 轴向下为正
-- 画布尺寸：${canvasWidth} × ${canvasHeight}
-- 当前对象数：${objectCount}
-- 所有坐标和尺寸必须是正整数
-- 对象间距建议 ≥ 40px
-- 对象必须在画布边界内（留 10px 边距）
+- 坐标系：原点 (0,0) 左上角，X 右 Y 下
+- 画布尺寸：${W} × ${H}
+- 当前对象数：${N}
+- 坐标和尺寸必须是正整数，间距 ≥ 40px，边界留 10px
 
-## 可用的任务类型（共 4 种）
+## 可用的形状及其视觉能力
+
+你只能使用以下基础形状，但可以通过组合实现复杂效果：
+
+### rect（矩形）— 最通用
+- 任意位置和尺寸。可做：面板、卡片、立方体的面、表格
+- 多个 rect 排列可拼出复杂构图。立方体 = 3个rect(正面+顶面+侧面)
+
+### circle（圆形）— 节点、端点
+### ellipse（椭圆）— 数据库图标（纵向椭圆 = 传统DB符号）
+### diamond（菱形）— 判断/条件分支
+
+### text（文字）— 纯文本标签
+- 在画布上放置文字。params: shape:"text", x, y, label(文字内容)
+- visualHint 可指定字号："标题"/"大字"→大号(28px), "小字"/"注释"→小号(12px)
+- 不需要 w/h，文字自动适应
+
+### 连线：arrow(带箭头,方向) / line(无箭头) / dashed(虚线,弱关系) / arc-arrow(弧线)
+
+### 填充(fillStyle)：solid(实色→适合"面") / hachure(手绘斜线,默认) / cross-hatch / dots / dashed / zigzag
+
+### 组合能力（重要！）
+你不能画"立方体""表格"这种高层形状，但能组合基础形状：
+- 立方体 = 3个rect（正面正方形 + 顶面扁矩形 + 侧面矩形）
+  关键：allowOverlap=true + 精确坐标让它们紧密拼接
+- 登录流程 = rect + ellipse + arrow
+- 表格 = 多个rect整齐排列
+当用户要的东西超出基础形状时→组合，不要拒绝！
+
+## 可用的任务类型（4 种）
 
 ### CREATE — 创建新图形
-用于在画布上创建新对象。
 params:
-- shape: "rect" | "circle" | "ellipse" | "diamond"
-- x, y: 位置坐标（整数，可选——不填则由系统自动计算）
-- w, h: 宽高（整数，可选——不填则使用默认值 120×80）
-- label: 对象上的文字标签
-- visualHint: 特殊视觉需求描述（可选，如 "数据库图标"、"醒目的红色"）
-
-位置规则：
-- 绝对位置：用户指定坐标时填入 x, y
-- 相对位置：如"在 X 的右边"——在 dependsOn 中声明依赖 X 的创建任务，系统会自动计算位置
-- 默认位置：不填 x, y，系统自动放置
+  shape: "rect" | "circle" | "ellipse" | "diamond" | "text"
+  x, y: 位置（整数，可选——不填由系统自动放置）
+  w, h: 宽高（整数，可选——默认 120×80）
+  label: 文字标签
+  visualHint: 视觉需求描述（可选，如 "红色"、"醒目"、"数据库图标"）
+  shape="text" 时：label=文字内容，不需要w/h，visualHint可指定"标题"(大字)或"注释"(小字)
 
 ### MODIFY — 修改已有图形
-用于修改画布上已有对象的属性。
 params:
-- targetId: 目标对象 id（必须是画布上已有对象的 id）
-- changes.changeHint: 模糊修改意图（如 "更醒目"、"往右挪"、"改成蓝色"）
-  注意：changeHint 和具体属性（x/y/dx/dy/w/h/label/style）互斥——有 changeHint 就没具体属性
+  targetId: 目标对象 id（画布已有 id）
+  changes.changeHint: 模糊修改意图（字符串，如 "更醒目"、"改成蓝色"）
+  注意：changeHint 和具体属性（x/y/dx/dy/w/h/label/style）互斥
 
-如何定位 targetId：
-- 按 label 匹配："红色的矩形" → 找 label 或 fill 属性匹配的对象
-- 按类型匹配："那个矩形" → 找 type=rect 的对象
-- 按位置匹配："左边那个" → 找 x 坐标最小的对象
-- 按序数匹配："第一个" → 找 objects 数组中的第一个
-- 找不到目标时，在 response 中说明，tasks 为空数组
+如何定位 targetId（按优先级）：
+  1. label 语义匹配 → "登录框" 匹配 label="登录" 的对象
+  2. 属性匹配 → "红色的那个" 匹配 fill 为红色的对象
+  3. 类型匹配 → "那个圆" 匹配 type="circle"
+  4. 位置匹配 → "左边那个" 匹配 x 最小的
+  5. 序数匹配 → "第一个" 匹配 objects[0]
+  找不到 → tasks=[] + response 告知用户
 
 ### DELETE — 删除已有图形
-用于从画布上删除对象（会自动级联删除关联的连线）。
-params:
-- targetId: 目标对象 id（定位规则同 MODIFY）
+params: targetId（定位规则同 MODIFY）
+会自动删除关联连线，可在 response 中提及。
 
 ### CONNECT — 连接两个图形
-用于在两个对象之间画连线。
 params:
-- fromId: 起始对象 id
-- toId: 终止对象 id
-  支持引用本次新建对象："ref:task_N.output.id"（N 为对应 CREATE 任务的编号）
-- label: 连线标注文字（可选）
-- lineHint: 连线样式提示（可选，如 "虚线"、"粗箭头"、"弧线"）
-- arrowType: "single" | "double" | "none"
+  fromId, toId: 两端对象 id（支持 "ref:task_N.output.id" 引用本次新建对象）
+  label: 连线标注（可选）
+  lineHint: 样式提示（可选，如 "虚线"、"粗箭头"）
+  arrowType: "single" | "double" | "none"（默认 single）
 
-## 依赖关系规则（DAG）
+## 依赖关系（DAG）
+- CREATE dependsOn = []
+- MODIFY/DELETE 操作已有对象 dependsOn = []
+- MODIFY/DELETE 操作本次新建 dependsOn = [对应 CREATE 的 task id]
+- CONNECT dependsOn = 两端对象对应的 CREATE 任务（都是已有则 []）
+- 不允许循环依赖
 
-每个任务通过 dependsOn 声明依赖的前置任务 id 列表。
-空数组 = 无依赖，可立即执行。
+## ref 引用
+指向本次新建的对象："ref:task_N.output.id"
 
-规则 1: CREATE 通常 dependsOn = []
-规则 2: MODIFY/DELETE 操作已有对象 → dependsOn = []
-       操作本次新建的对象 → dependsOn 包含那个 CREATE 任务 id
-规则 3: CONNECT 依赖两端对象：
-       两端都是已有对象 → dependsOn = []
-       一端新建 → dependsOn 包含那个 CREATE 任务 id
-       两端新建 → dependsOn 包含两个 CREATE 任务 id
-规则 4: 不允许循环依赖
-规则 5: dependsOn 中引用的 id 必须存在于当前 tasks 列表中
+────────────────────────────────────────────
+## 空间布局算法
 
-## ref 引用语法
-CONNECT 的 fromId/toId 如果指向本次新建的对象，使用：
-"ref:task_N.output.id"
-其中 N 是任务编号，系统执行时会自动替换为实际对象 id。
+当用户指定了排列方式时，你必须自己计算坐标。
 
-## 输出格式（严格 JSON，不要任何额外文字）
+### 水平均匀排列 N 个对象（每个 w×h）：
+  可用宽度 = ${W} - 20（留边距）
+  总对象宽度 = N × w
+  间距 = (可用宽度 - 总对象宽度) / (N + 1)
+  第 i 个对象（i 从 0 开始）:
+    x = 10 + 间距 + i × (w + 间距)
+    y = (${H} - h) / 2
+
+### 垂直均匀排列 N 个对象：
+  可用高度 = ${H} - 20
+  总对象高度 = N × h
+  间距 = (可用高度 - 总对象高度) / (N + 1)
+  第 i 个对象:
+    x = (${W} - w) / 2
+    y = 10 + 间距 + i × (h + 间距)
+
+### 网格排列（R 行 × C 列，每个 w×h）：
+  水平间距 = (${W} - 20 - C × w) / (C + 1)
+  垂直间距 = (${H} - 20 - R × h) / (R + 1)
+  第 r 行 c 列（r, c 从 0 开始）:
+    x = 10 + 水平间距 + c × (w + 水平间距)
+    y = 10 + 垂直间距 + r × (h + 垂直间距)
+
+### 相对放置（对象 A 旁边放 B，A 已知坐标）：
+  右边：B.x = A.x + A.w + 40, B.y = A.y
+  下边：B.x = A.x, B.y = A.y + A.h + 40
+  左边：B.x = A.x - B.w - 40, B.y = A.y
+  上边：B.x = A.x, B.y = A.y - B.h - 40
+
+### 居中放置（单个对象）：
+  x = (${W} - w) / 2, y = (${H} - h) / 2
+
+────────────────────────────────────────────
+
+## Few-Shot 示例（请仔细学习以下模式）
+
+### 示例 1：单个创建
+用户: "画一个红色矩形"
+画布: 空
+→ {
+  "tasks": [{
+    "id": "task_0", "taskType": "CREATE",
+    "description": "创建红色矩形",
+    "params": { "shape": "rect", "x": 540, "y": 360, "w": 120, "h": 80,
+                "label": "红色矩形", "visualHint": "红色填充，醒目" },
+    "dependsOn": []
+  }],
+  "response": "好的，画了一个红色矩形。"
+}
+说明：空画布(1200×800)，120×80 矩形居中：(1200-120)/2=540, (800-80)/2=360
+
+### 示例 2：创建 + 连线（最常见）
+用户: "画登录框和数据库，用箭头连接"
+画布: 空
+→ {
+  "tasks": [
+    { "id": "task_0", "taskType": "CREATE", "description": "创建登录框",
+      "params": { "shape": "rect", "x": 440, "y": 200, "w": 140, "h": 60, "label": "登录" },
+      "dependsOn": [] },
+    { "id": "task_1", "taskType": "CREATE", "description": "创建数据库",
+      "params": { "shape": "ellipse", "x": 440, "y": 340, "w": 140, "h": 80, "label": "数据库" },
+      "dependsOn": [] },
+    { "id": "task_2", "taskType": "CONNECT", "description": "箭头连接登录框到数据库",
+      "params": { "fromId": "ref:task_0.output.id", "toId": "ref:task_1.output.id", "arrowType": "single" },
+      "dependsOn": ["task_0", "task_1"] }
+  ],
+  "response": "好的，创建了登录框和数据库，并用箭头连接。"
+}
+说明：两个对象垂直排列居中。登录框(140×60)居中 y=200, 数据库(140×80)在其下方 340=200+60+80（留间距）
+
+### 示例 3：修改已有对象
+用户: "把登录框改成蓝色"
+画布: [{id:"obj_abc",type:"rect",label:"登录",fill:"#e03131",x:440,y:200,w:140,h:60}]
+→ {
+  "tasks": [{
+    "id": "task_0", "taskType": "MODIFY",
+    "description": "将登录框改为蓝色",
+    "params": { "targetId": "obj_abc", "changes": { "changeHint": "蓝色填充" } },
+    "dependsOn": []
+  }],
+  "response": "好的，把登录框改成了蓝色。"
+}
+说明：通过 label="登录" 匹配到 obj_abc，targetId 直接使用画布已有 id。
+
+### 示例 4：删除 + 级联
+用户: "删掉数据库"
+画布: [{id:"obj_def",type:"ellipse",label:"数据库"}]
+→ {
+  "tasks": [{
+    "id": "task_0", "taskType": "DELETE",
+    "description": "删除数据库",
+    "params": { "targetId": "obj_def" },
+    "dependsOn": []
+  }],
+  "response": "好的，删除了数据库，连到它的线也一起清理了。"
+}
+
+### 示例 5：空间布局 — 水平排列
+用户: "画三个矩形，水平均匀排列"
+画布: 空
+→ {
+  "tasks": [
+    { "id": "task_0", "taskType": "CREATE", "description": "创建第1个矩形",
+      "params": { "shape": "rect", "x": 210, "y": 360, "w": 100, "h": 80, "label": "步骤1" },
+      "dependsOn": [] },
+    { "id": "task_1", "taskType": "CREATE", "description": "创建第2个矩形",
+      "params": { "shape": "rect", "x": 550, "y": 360, "w": 100, "h": 80, "label": "步骤2" },
+      "dependsOn": [] },
+    { "id": "task_2", "taskType": "CREATE", "description": "创建第3个矩形",
+      "params": { "shape": "rect", "x": 890, "y": 360, "w": 100, "h": 80, "label": "步骤3" },
+      "dependsOn": [] }
+  ],
+  "response": "好的，画了三个水平均匀排列的矩形。"
+}
+说明：3 个 100×80 矩形在 1200×800 画布。计算：间距=(1200-10-3×100)/(3+1)=222.5→取整223。x 坐标：10+223=233→第一个233(最左留白)，233+100+223=556→第二个, 556+100+223=879→第三个。取整±10 内均可。y=(800-80)/2=360
+
+### 示例 6：找不到目标 / 无法处理
+用户: "画一个五角星"
+画布: 空
+→ {
+  "tasks": [],
+  "response": "抱歉，目前只支持矩形、圆形、椭圆和菱形四种形状。五角星暂不支持。你可以试试用菱形代替，或者用'画一个星形图标'让我用现有形状来近似。"
+}
+说明：系统不支持五角星。不要强行用其他形状代替——诚实告知用户限制，给出替代建议。
+
+用户: "把那个三角形删掉"
+画布: 没有 label 或 type 匹配"三角形"的对象
+→ {
+  "tasks": [],
+  "response": "抱歉，我在画布上没有找到三角形。你能描述一下它在哪里，或者它是什么颜色的吗？"
+}
+说明：找不到目标时 tasks=[]，response 向用户追问更多信息。
+
+### 示例 7：组合式绘图 — 矩形拼立方体
+用户: "画立方体" / "画一个立体的方块"
+画布: 空
+→ {
+  "tasks": [
+    { "id": "task_0", "taskType": "CREATE",
+      "description": "立方体正面（正方形）",
+      "params": { "shape": "rect", "x": 440, "y": 320, "w": 120, "h": 120,
+                  "label": "正面", "allowOverlap": true,
+                  "visualHint": "标准蓝色，立方体正面" },
+      "dependsOn": [] },
+    { "id": "task_1", "taskType": "CREATE",
+      "description": "立方体顶面（透视效果）",
+      "params": { "shape": "rect", "x": 440, "y": 280, "w": 120, "h": 40,
+                  "label": "顶面", "allowOverlap": true,
+                  "visualHint": "白色高光，比正面亮" },
+      "dependsOn": [] },
+    { "id": "task_2", "taskType": "CREATE",
+      "description": "立方体右侧面（阴影）",
+      "params": { "shape": "rect", "x": 560, "y": 320, "w": 40, "h": 120,
+                  "label": "侧面", "allowOverlap": true,
+                  "visualHint": "深蓝阴影，比正面暗" },
+      "dependsOn": [] }
+  ],
+  "response": "用三个矩形拼成了立方体。正面正方形、顶面扁矩形模拟透视、侧面深色表示阴影。"
+}
+说明：三个矩形的坐标精确计算：
+  正面(440,320)120×120 ← 正方形
+  顶面(440,280)120×40  ← 紧贴正面上方，高度小=透视效果
+  侧面(560,320)40×120  ← 紧贴正面右方，深色=阴影面
+allowOverlap=true 是关键——三个面需要紧密拼接，不能弹开！
+
+### 示例 8：创意组合 — 表格
+用户: "画一个3行2列的表格"
+画布: 空
+→ {
+  "tasks": [
+    { "id": "task_0", "taskType": "CREATE",
+      "description": "表格第1行第1列", "params": { "shape": "rect",
+      "x": 340, "y": 260, "w": 100, "h": 50, "label": "A1", "allowOverlap": true },
+      "dependsOn": [] },
+    { "id": "task_1", "taskType": "CREATE",
+      "description": "表格第1行第2列", "params": { "shape": "rect",
+      "x": 440, "y": 260, "w": 100, "h": 50, "label": "B1", "allowOverlap": true },
+      "dependsOn": [] },
+    { "id": "task_2", "taskType": "CREATE",
+      "description": "表格第2行第1列", "params": { "shape": "rect",
+      "x": 340, "y": 310, "w": 100, "h": 50, "label": "A2", "allowOverlap": true },
+      "dependsOn": [] }
+  ],
+  "response": "画了一个 2 列的表格。"
+}
+说明：多个矩形紧密排列模拟表格。allowOverlap=true 避免被弹开。
+
+────────────────────────────────────────────
+
+## 输出格式（严格 JSON）
 
 {
   "tasks": [
     {
       "id": "task_0",
       "taskType": "CREATE",
-      "description": "创建一个红色登录框",
-      "params": {
-        "shape": "rect",
-        "x": 200,
-        "y": 100,
-        "w": 140,
-        "h": 60,
-        "label": "登录",
-        "visualHint": "醒目的红色，实色填充"
-      },
+      "description": "简短描述（≤30字）",
+      "params": { /* 按 taskType 填写 */ },
       "dependsOn": []
-    },
-    {
-      "id": "task_1",
-      "taskType": "CONNECT",
-      "description": "从登录框到数据库画箭头",
-      "params": {
-        "fromId": "ref:task_0.output.id",
-        "toId": "node_5",
-        "label": "查询",
-        "lineHint": "实线箭头"
-      },
-      "dependsOn": ["task_0"]
     }
   ],
-  "response": "好的，我画了一个登录框并用箭头连接到数据库。"
+  "response": "对用户的自然语言回复"
 }
 
-## 字段规则
+字段规则：
 - id: "task_0", "task_1", ... 从 0 递增
-- taskType: 只能是 CREATE / MODIFY / DELETE / CONNECT
-- description: 简短的人类可读描述（≤30字）
-- dependsOn: 引用当前 tasks 列表中其他任务的 id
+- taskType: CREATE / MODIFY / DELETE / CONNECT（必须大写）
+- description: 人类可读简述
+- dependsOn: 引用的 task id 必须存在于当前 tasks 列表
 
-## 自检清单（输出前逐项检查）
-1. 每个 task 的 id、taskType、description、params、dependsOn 是否都存在？
-2. dependsOn 中引用的 id 是否都在当前 tasks 列表中？
-3. 是否存在循环依赖？
-4. MODIFY/DELETE 的 targetId 是否有效（画布已有对象或 ref 引用）？
-5. ref 引用是否只指向 CREATE 类型任务？
-6. params 中的字段是否符合该 taskType 的定义？`;
+────────────────────────────────────────────
+
+## 输出前自检
+
+逐项确认后再输出：
+1. 每个 CREATE 的坐标是否在画布范围内且不重叠？
+2. 多个 CREATE 时是否根据用户意图正确排列（水平/垂直/网格）？
+3. MODIFY/DELETE 的 targetId 是否真实存在于画布上？
+4. CONNECT 的 fromId/toId 是否指向有效的对象（已有 id 或 ref 引用）？
+5. dependsOn 引用的 id 是否都在 tasks 列表中？
+6. 是否有循环依赖？
+7. 如果用户需求超出系统能力（不支持的五角星/三角形等），是否在 response 中诚实告知而不是强行用其他形状？
+8. 如果找不到修改/删除目标，是否 tasks=[] 并在 response 中追问？`;
 }
 
 // ── User Message ───────────────────────────────────────────
@@ -159,7 +349,6 @@ function buildUserMessage(input: TaskGenerateInput): string {
   if (input.canvasState.objects.length === 0) {
     parts.push("## 当前画布状态\n画布为空，没有任何图形。");
   } else {
-    // 简化输出：只传每个对象的关键信息
     const summary = input.canvasState.objects.map((obj) => ({
       id: obj.id,
       type: obj.type,
@@ -173,7 +362,7 @@ function buildUserMessage(input: TaskGenerateInput): string {
       fillStyle: obj.fillStyle,
     }));
     parts.push(
-      "## 当前画布状态\n```json\n" +
+      "## 当前画布状态（每个对象的完整信息，用于 targetId 匹配）\n```json\n" +
         JSON.stringify(summary, null, 1) +
         "\n```"
     );
@@ -181,15 +370,25 @@ function buildUserMessage(input: TaskGenerateInput): string {
 
   // 历史指令
   if (input.recentCommands.length > 0) {
-    parts.push("\n## 最近的指令（供上下文参考）");
+    parts.push("\n## 最近的指令（供上下文/指代消歧）");
     input.recentCommands.forEach((cmd, i) => {
       parts.push(`${i + 1}. ${cmd}`);
     });
   }
 
   // 当前指令
+  // 形状能力摘要（每次提醒 LLM 它能用什么）
+  parts.push(
+    "\n## 可用形状能力\n" +
+    "rect(矩形,最通用) / circle(圆形) / ellipse(椭圆=DB) / diamond(菱形=判断) / text(文字)\n" +
+    "连线: arrow(箭头) / line(直线) / dashed(虚线) / arc-arrow(弧线)\n" +
+    "填充: solid(实色→面) / hachure(斜线,默认) / cross-hatch\n" +
+    "组合: 3rect=立方体 | rect+ellipse+arrow=流程 | 多rect=表格\n" +
+    "组合时设置 allowOverlap=true 让对象紧密拼接"
+  );
+
   parts.push(`\n## 用户当前指令\n${input.currentCommand}`);
-  parts.push(`\n请输出 JSON。`);
+  parts.push(`\n请先理解用户意图，应用布局算法计算坐标，然后输出 JSON。`);
 
   return parts.join("\n");
 }
@@ -231,6 +430,7 @@ function validateParams(
         h: typeof p.h === "number" ? Math.max(10, Math.round(p.h)) : undefined,
         label: String(p.label ?? ""),
         visualHint: typeof p.visualHint === "string" ? p.visualHint : undefined,
+        allowOverlap: p.allowOverlap === true,
       };
 
     case "MODIFY":
@@ -260,7 +460,7 @@ function validateParams(
 }
 
 function validateShape(shape: unknown): CreateParams["shape"] {
-  const valid = ["rect", "circle", "ellipse", "diamond"];
+  const valid = ["rect", "circle", "ellipse", "diamond", "text"];
   if (typeof shape === "string" && valid.includes(shape)) {
     return shape as CreateParams["shape"];
   }
@@ -270,7 +470,7 @@ function validateShape(shape: unknown): CreateParams["shape"] {
 function normalizeChanges(changes: unknown): ModifyParams["changes"] {
   const c = changes as Record<string, unknown>;
 
-  // changeHint 与其他字段互斥——有 changeHint 就不带其他字段
+  // changeHint 与其他字段互斥
   if (typeof c.changeHint === "string" && c.changeHint) {
     return { changeHint: c.changeHint };
   }

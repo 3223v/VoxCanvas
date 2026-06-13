@@ -48,7 +48,7 @@ export interface ShapeStyle {
 }
 
 export interface CreateParams {
-  shape: "rect" | "circle" | "ellipse" | "diamond";
+  shape: "rect" | "circle" | "ellipse" | "diamond" | "text";
   x?: number;
   y?: number;
   w?: number;
@@ -57,6 +57,8 @@ export interface CreateParams {
   style?: Partial<ShapeStyle>;
   /** 特殊视觉需求，由 CreateSubWorkflow 解析 */
   visualHint?: string;
+  /** 允许与已有对象重叠（用于组合式构图，如立方体的面需要拼接） */
+  allowOverlap?: boolean;
 }
 
 export interface ModifyChanges {
