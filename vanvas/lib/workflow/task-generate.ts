@@ -38,60 +38,54 @@ function buildSystemPrompt(input: TaskGenerateInput): string {
 
 ## 你的创作工具箱
 
-你不是被限制——你是在一个有趣的约束中发挥创造力。以下是你的全部工具：
+以下是你拥有的**全部 9 种形状** + **6 种填充** + **8 种颜色**。请全部用起来。
 
-### line（线段）— 最强大的形状 ⚡
-- 两点之间的线段。这是你的"万能画笔"
-- **用多条 line 可以画出任意多边形、星形、网格**
-- 五角星 = 5 条 line 交错连接 5 个顶点
-- 三角形 = 3 条 line 首尾相连
-- 箭头主体 = 1 条 line
-- 坐标网格、时间轴 = 多条水平/垂直线
-- line 之间可以交叉、重叠，创造复杂图形
+### 🔧 线段家族（4 种）— 最强大的表达工具
 
-### rect（矩形）— 最通用的"面"
-- 可做：色块、面板、立方体的面、马赛克像素
-- 多个 rect 拼成立方体、表格、建筑、棋盘
-- fillStyle:"solid" + 颜色 = 彩色面；fillStyle:"hachure" = 手绘质感
+line      — 无箭头直线。万能画笔。多点=折线=自由曲线。五角星=10条线交错。网格=横竖线
+dashed    — 虚线。辅助线、草稿线、透视线、隐藏边
+arrow     — 带箭头。方向、流程。箭头自动画在终点
+arc-arrow — 弧线箭头。弯曲流程、回环
 
-### circle / ellipse / diamond
-- circle: 节点、端点、太阳、气泡
-- ellipse: 数据库图标、花瓣（多个椭圆旋转排列）
-- diamond: 菱形、判断节点、星形的角
+所有线段类型都支持 points:[[x1,y1],[x2,y2],...] —— 多点=折线=自由画笔！
+2个点=直线段，5个点=折线，20个点=自由曲线
+strokeWidth 控制粗细（1=极细, 4=中等, 8=粗），stroke 控制颜色
 
-### text — 文字标签
-- shape:"text", label=文字内容, x, y
-- visualHint 控制字号："标题"/"大字"(28px), "小字"/"注释"(12px)
+### 📦 面家族（4 种）
 
-### 连线类型
-- arrow: 带箭头，方向/流程
-- line: 无箭头直线，**最灵活的形状**
-- dashed: 虚线，弱关系或辅助线
-- arc-arrow: 弧线，弯曲流程
+rect    — 矩形。最通用的面。色块、面板、立方体面、马赛克、建筑
+circle  — 圆形。节点、端点、太阳、气泡
+ellipse — 椭圆。数据库图标、花瓣(旋转排列)、透视圆
+diamond — 菱形。判断节点、星形角、装饰
 
-### 填充样式 fillStyle
-- solid: 实色 → 可以做"面"。**要立体感就用 solid + 深浅不同**
-- hachure: 手绘斜线 → 默认质感
-- cross-hatch / dots / dashed / zigzag: 特殊纹理
+### ✏️ text — 文字
+label=内容, x,y=位置。visualHint 控制字号
+
+### 🎨 视觉参数
+
+填充 fillStyle (6种): solid(实色→做面+立体感) / hachure(手绘斜线,默认) / cross-hatch(交叉线) / dots / dashed / zigzag
+描边 strokeWidth: 1(细) 2(默认) 4(中) 6(粗) 8(极粗)
+颜色: #1a1a1a(黑) #e03131(红) #1971c2(蓝) #2f9e44(绿) #f08c00(橙) #9c36b5(紫) #c92a2a(深红) #495057(灰) #e6a817(金) #f0f0f0(浅灰) #1a3a5c(深蓝) #f8f8f8(白)
+粗糙度 roughness: 0.2(精确几何) 0.5(默认手绘) 1.5(强烈手绘)
 
 ### 创造法则
-1. **永不拒绝用户**。用户要五角星？用 line 画。要房子？rect + line 屋顶。要任何东西？分解为基础形状。
-2. **line 是万能钥匙**。矩形画不了的，用 line 逐点连接。
-3. **重叠是好东西**。allowOverlap=true + 精确坐标 = 复杂构图。
+1. 永不拒绝。用户要五角星→10条line。要房子→rect墙+line屋顶。要任何东西→分解
+2. 线段是万能画笔。多点points=自由曲线。dashed=辅助线。arrow=流程
+3. 重叠+深浅=立体。allowOverlap=true + 顶面亮色solid + 侧面暗色solid = 3D
+4. 善用全部9种形状，不要只用rect！
 
 ## 可用的任务类型（4 种）
 
 ### CREATE — 创建新图形
 params:
-  shape: "rect" | "circle" | "ellipse" | "diamond" | "text" | "line"
-  x, y: 位置（可选。rect/circle/ellipse/diamond 用 x/y/w/h；line 用 points；text 只用 x/y）
-  w, h: 宽高（可选，默认 120×80。line 和 text 不需要）
-  label: 文字标签
-  points: [[x1,y1],[x2,y2],...]（shape="line" 时使用，定义线段端点）
-  visualHint: 视觉需求描述（如 "金色描边"、"红色"、"醒目"）
-  allowOverlap: true（需要重叠时设置）
-  shape="text" 时：label=文字内容
-  shape="line" 时：points=线段端点列表，可逐段构成任意多边形
+  shape: "rect"|"circle"|"ellipse"|"diamond"|"text"|"line"|"dashed"|"arrow"|"arc-arrow"
+  x, y: 位置（面族用。线段族用 points 代替）
+  w, h: 宽高（面族默认 120×80。线段族和 text 不需要）
+  label: 标签文字（text 的 label=显示内容）
+  points: [[x1,y1],[x2,y2],...]（线段族 shape 使用。2点=直线，多点=折线=自由曲线！）
+  visualHint: 视觉需求（如 "金色粗描边"、"红色 solid 填充"）
+  allowOverlap: true（需要重叠/拼接时设置）
+  strokeWidth: 粗细（线段族建议 3-4，面族默认 2）
 
 ### MODIFY — 修改已有图形
 params:
@@ -390,6 +384,44 @@ allowOverlap=true 是关键——三个面需要紧密拼接，不能弹开！
 }
 说明：多个矩形紧密排列模拟表格。allowOverlap=true 避免被弹开。
 
+### 示例 9：自由曲线 — 多点折线模拟手绘
+用户: "画一条波浪线"
+画布: 空
+→ {
+  "tasks": [{
+    "id": "task_0", "taskType": "CREATE", "description": "波浪线",
+    "params": { "shape": "line", "strokeWidth": 3,
+      "points": [[100,400],[200,350],[300,400],[400,350],[500,400],[600,350],[700,400]],
+      "visualHint": "蓝色描边", "allowOverlap": true },
+    "dependsOn": []
+  }],
+  "response": "画了一条波浪线，用 7 个点模拟正弦波。"
+}
+说明：points 可以有任意多个点！2点=直线，多点=折线=自由曲线。这就是"自由画笔"。
+
+### 示例 10：透视线 + 辅助线
+用户: "画一个带透视辅助线的立方体"
+画布: 空
+→ {
+  "tasks": [
+    { "id": "task_0", "taskType": "CREATE", "description": "立方体正面",
+      "params": { "shape": "rect", "x": 400, "y": 300, "w": 150, "h": 150, "label": "正面",
+                  "visualHint": "蓝色 solid 填充", "allowOverlap": true }, "dependsOn": [] },
+    { "id": "task_1", "taskType": "CREATE", "description": "立方体顶面",
+      "params": { "shape": "rect", "x": 400, "y": 250, "w": 150, "h": 50, "label": "顶面",
+                  "visualHint": "浅蓝 solid 高光", "allowOverlap": true }, "dependsOn": [] },
+    { "id": "task_2", "taskType": "CREATE", "description": "立方体右侧面",
+      "params": { "shape": "rect", "x": 550, "y": 300, "w": 50, "h": 150, "label": "侧面",
+                  "visualHint": "深蓝 solid 阴影", "allowOverlap": true }, "dependsOn": [] },
+    { "id": "task_3", "taskType": "CREATE", "description": "右透视辅助线",
+      "params": { "shape": "dashed", "strokeWidth": 1,
+                  "points": [[550,350],[750,200],[550,250],[750,200],[700,300],[750,200]],
+                  "visualHint": "灰色细虚线", "allowOverlap": true }, "dependsOn": [] }
+  ],
+  "response": "画了带透视辅助线的立方体。虚线向右侧消失点汇聚，体现一点透视。"
+}
+说明：dashed 虚线 + 多点 = 透视线！辅助线汇聚到消失点。
+
 ────────────────────────────────────────────
 
 ## 输出格式（严格 JSON）
@@ -468,7 +500,7 @@ function buildUserMessage(input: TaskGenerateInput): string {
   // 形状能力摘要（每次提醒 LLM 它能用什么）
   parts.push(
     "\n## 可用形状能力\n" +
-    "rect(矩形) / circle(圆形) / ellipse(椭圆) / diamond(菱形) / line(线段,万能画笔) / text(文字)\n" +
+    "面: rect/circle/ellipse/diamond | 线: line/dashed/arrow/arc-arrow(多点=自由曲线) | 字: text\n" +
     "连线: arrow(箭头) / line(直线) / dashed(虚线) / arc-arrow(弧线)\n" +
     "填充: solid(实色→面) / hachure(斜线,默认) / cross-hatch\n" +
     "组合: 3rect=立方体 | rect+ellipse+arrow=流程 | 多rect=表格\n" +
@@ -549,7 +581,7 @@ function validateParams(
 }
 
 function validateShape(shape: unknown): CreateParams["shape"] {
-  const valid = ["rect", "circle", "ellipse", "diamond", "text", "line"];
+  const valid = ["rect", "circle", "ellipse", "diamond", "text", "line", "dashed", "arrow", "arc-arrow"];
   if (typeof shape === "string" && valid.includes(shape)) {
     return shape as CreateParams["shape"];
   }
