@@ -102,6 +102,24 @@
 - **边界宽松**：`clampPosition` 只防完全不可见，允许 80% 溢出
 - **文字是手动工具**：AI 可通过 `shape: "text"` 创建文字，但文字编辑（双击）是前端手动功能
 
-## SSE 状态
+## SSE 实时推送
 
-**当前不支持 SSE 流式推送。** 后端 pipeline 是同步的（POST → 等待全部完成 → 返回 JSON）。前端显示阶段提示（"分析指令…"→"规划任务…"→"绘制中…"）是纯客户端定时器模拟，不反映真实后端进度。详见 `docs/ai.md` §7 的 SSE 协议设计（已设计，未实现）。
+**已实现。** 后端在执行每个任务时通过 SSE 向已连接的客户端推送进度事件。
+
+| 文件 | 做什么 |
+|---|---|
+| `lib/sse/sse-manager.ts` | 内存连接池：canvasId → Set\<Stream\>，`emit()` 广播事件 |
+| `app/api/canvas/[id]/sse/route.ts` | GET 端点：建立 SSE 长连接，心跳保活 |
+| `app/api/canvas/[id]/command/route.ts` | POST 端点：执行时调用 `sseManager.emit(canvasId, event)` 实时推送 |
+| `components/canvas/ChatPanel.tsx` | `EventSource` 监听，SSE 事件驱动阶段提示 |
+
+**事件流**：
+```
+POST /command → SSE:
+  PLAN_READY   → 前端："分析指令…"（timer）或 "规划任务…"（timer）
+  TASK_START   → 前端："绘制中…"（实时）
+  TASK_RESULT  → 前端："绘制中…"（实时，每个任务完成推送一次）
+  ALL_DONE     → 后端推送，前端 fetch 返回最终结果
+```
+
+前端阶段提示现在是**混合驱动**：未收到 SSE 事件时用定时器切换（"分析指令…" → "规划任务…"），收到 TASK_START 后切为"绘制中…"。

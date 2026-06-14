@@ -1,13 +1,12 @@
 /**
  * POST /api/canvas/[id]/command
  *
- * AI 绘图指令入口（Phase 1 — 同步模式）。
- *
- * 接收用户的自然语言指令，经过完整的 pipeline：
+ * AI 绘图指令入口。pipeline：
  *   task-generate → orchestrator → handlers → 持久化
- * 返回更新后的 objects 数组，前端直接 setObjects。
+ * 通过 SSE 实时推送进度，同时返回最终 objects 数组。
  */
 import { NextRequest, NextResponse } from "next/server";
+import { sseManager } from "@/lib/sse/sse-manager";
 import { getLLMProvider } from "@/lib/llm";
 import { taskGenerate } from "@/lib/workflow/task-generate";
 import { runOrchestrator } from "@/lib/orchestrator/orchestrator";
@@ -129,6 +128,7 @@ export async function POST(
       llm,
       canvasState: session.canvasState,
       taskPlan,
+      emit: (event) => sseManager.emit(canvasId, event),
     });
 
     // ── 9. 更新 tasks 执行结果 ────────────────────────────
