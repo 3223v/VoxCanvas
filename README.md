@@ -22,6 +22,11 @@ LLM_BASE_URL=https://api.deepseek.com    # 或其他兼容端点
 LLM_MODEL_NAME=deepseek-chat             # 模型名
 ```
 
+## 额外提交的设计方案
+
+[设计方案](/设计方案.md)
+设计方案.md
+
 <br />
 
 ## 设计
@@ -45,19 +50,19 @@ LLM_MODEL_NAME=deepseek-chat             # 模型名
 ```
 用户语音 → ASR → 文本指令
                     ↓
-┌──────────────────────────────────┐
-│  POST /api/canvas/[id]/command   │
-│  task-generate (LLM #1)          │ ← 意图理解 → 任务 DAG
-│  orchestrator (拓扑排序)          │
-│  handlers (CREATE/MODIFY/DELETE/CONNECT) │
-│  sub-workflows (LLM #2, 需要时)  │ ← 样式细化
-│  → DrawObject[]                  │
-└──────────────────────────────────┘
+┌────────────────────────────────────────────┐
+│  POST /api/canvas/[id]/command             │
+│  → task-generate (LLM #1)                  │ ← 意图理解 → 任务 DAG
+│  → orchestrator (拓扑排序)                  │
+│  → handlers (CREATE/MODIFY/DELETE/CONNECT) │
+│  → sub-workflows (LLM #2, 需要时)           │ ← 样式细化
+│  → DrawObject[]                            │
+└────────────────────────────────────────────┘
                     ↓
           RoughCanvas 渲染
 ```
 
-详细设计文档见 `docs/ai.md`。
+<br />
 
 ## 技术栈
 
@@ -72,9 +77,9 @@ LLM_MODEL_NAME=deepseek-chat             # 模型名
 
 ## 文档
 
-| 文档                         | 说明             |
-| -------------------------- | -------------- |
-| `docs/workflow-details.md` | 提示词注入 + 执行机制详解 |
-| `docs/shapes.md`           | 各形状的渲染实现方式     |
-| `docs/how-it-works.md`     | 系统工作原理详解       |
+| 文档                              | 说明             |
+| ------------------------------- | -------------- |
+| vanvas/docs/workflow-details.md | 提示词注入 + 执行机制详解 |
+| vanvas/docs/shapes.md           | 各形状的渲染实现方式     |
+| vanvas/docs/how-it-works.md     | 系统工作原理详解       |
 
