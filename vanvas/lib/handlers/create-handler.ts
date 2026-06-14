@@ -49,6 +49,29 @@ export async function createHandler(input: {
   });
 
   try {
+    // ── line 类型：用 points 定义，调子工作流取样式 ──────
+    if (params.shape === "line") {
+      const points = params.points ?? [[params.x ?? 400, params.y ?? 300], [(params.x ?? 400) + 100, params.y ?? 300]];
+      const subResult = await createSubWorkflow(llm, {
+        description: task.description,
+        shape: "line",
+        label: params.label,
+        visualHint: params.visualHint,
+        canvasState: context.canvasState,
+      });
+      const obj: DrawObject = {
+        id: generateObjectId(),
+        type: "line",
+        points,
+        stroke: subResult.style.stroke,
+        strokeWidth: subResult.style.strokeWidth,
+        roughness: subResult.style.roughness,
+        seed: Math.floor(Math.random() * 100),
+      };
+      logger.info("CreateHandler 完成（线段）", { taskId: task.id, objectId: obj.id, pointCount: points.length });
+      return { taskId: task.id, status: "SUCCESS", outputObject: obj };
+    }
+
     // ── text 类型：不需要子工作流，不需要 Rough.js ──────
     if (params.shape === "text") {
       const fontSize = inferFontSize(params.visualHint, params.label);
@@ -92,7 +115,7 @@ export async function createHandler(input: {
         canvasState: context.canvasState,
       });
 
-      finalShape = subResult.shape;
+      finalShape = subResult.shape as typeof finalShape;
       finalStyle = subResult.style;
       logger.debug("CreateHandler 子工作流完成", {
         taskId: task.id,

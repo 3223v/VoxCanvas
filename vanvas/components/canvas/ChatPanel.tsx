@@ -10,6 +10,13 @@ interface Message {
   content: string;
 }
 
+/** SSE 推送的任务进度 */
+interface TaskProgress {
+  id: string;
+  description: string;
+  status: "PENDING" | "RUNNING" | "SUCCESS" | "FAILED";
+}
+
 interface ChatPanelProps {
   /** 当前画布 id（有值时启用 AI 绘图指令） */
   canvasId?: string;
@@ -25,6 +32,12 @@ export default function ChatPanel({ canvasId, onObjectsChange }: ChatPanelProps)
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [sending, setSending] = useState(false);
+  const [sendingPhase, setSendingPhase] = useState(0);
+  const sendingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // SSE 驱动的任务进度
+  const [tasksProgress, setTasksProgress] = useState<TaskProgress[]>([]);
+  const [tasksExpanded, setTasksExpanded] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const msgsRef = useRef<HTMLDivElement>(null);
@@ -60,7 +73,49 @@ export default function ChatPanel({ canvasId, onObjectsChange }: ChatPanelProps)
       .then((data) => {
         if (data.messages) setMessages(data.messages);
       })
-      .catch(() => {}); // 静默失败，不影响使用
+      .catch(() => {});
+  }, [canvasId]);
+
+  // SSE 连接 — 接收后端实时进度，更新任务列表和阶段提示
+  useEffect(() => {
+    if (!canvasId) return;
+    const es = new EventSource(`/api/canvas/${canvasId}/sse`);
+
+    es.addEventListener("PLAN_READY", (e: MessageEvent) => {
+      const data = JSON.parse(e.data);
+      setTasksProgress(
+        (data.taskSummary ?? []).map((t: { id: string; description: string; status: string }) => ({
+          id: t.id, description: t.description, status: t.status as TaskProgress["status"],
+        }))
+      );
+      setTasksExpanded(true);
+      setSendingPhase(1); // "规划任务…"
+    });
+
+    es.addEventListener("TASK_START", (e: MessageEvent) => {
+      const data = JSON.parse(e.data);
+      setTasksProgress((prev) =>
+        prev.map((t) => (t.id === data.taskId ? { ...t, status: "RUNNING" } : t))
+      );
+      setSendingPhase(2); // "绘制中…"
+    });
+
+    es.addEventListener("TASK_RESULT", (e: MessageEvent) => {
+      const data = JSON.parse(e.data);
+      setTasksProgress((prev) =>
+        prev.map((t) => (t.id === data.taskId ? { ...t, status: "SUCCESS" } : t))
+      );
+    });
+
+    es.addEventListener("TASK_FAILED", (e: MessageEvent) => {
+      const data = JSON.parse(e.data);
+      setTasksProgress((prev) =>
+        prev.map((t) => (t.id === data.taskId ? { ...t, status: "FAILED" } : t))
+      );
+    });
+
+    es.onerror = () => { /* 静默重连 */ };
+    return () => es.close();
   }, [canvasId]);
 
   // Detect "processing → idle" transition: no text → show toast
@@ -106,6 +161,12 @@ export default function ChatPanel({ canvasId, onObjectsChange }: ChatPanelProps)
     const userMsg: Message = { role: "user", content: msg };
     setMessages((prev) => [...prev, userMsg]);
     setSending(true);
+    setSendingPhase(0);
+    setTasksProgress([]);
+    // 每 4 秒切换到下一阶段提示
+    sendingTimerRef.current = setInterval(() => {
+      setSendingPhase((p) => p + 1);
+    }, 4000);
 
     try {
       if (canvasId) {
@@ -163,6 +224,10 @@ export default function ChatPanel({ canvasId, onObjectsChange }: ChatPanelProps)
       ]);
     } finally {
       setSending(false);
+      if (sendingTimerRef.current) {
+        clearInterval(sendingTimerRef.current);
+        sendingTimerRef.current = null;
+      }
     }
   };
 
@@ -243,10 +308,70 @@ export default function ChatPanel({ canvasId, onObjectsChange }: ChatPanelProps)
                 </div>
               </div>
             )}
-            {sending && (
+            {/* ── Task progress panel (SSE-driven) ── */}
+            {sending && tasksProgress.length > 0 && (
               <div className="flex justify-start">
-                <div className="px-3 py-2 rounded-xl rounded-bl-md bg-zinc-100 text-zinc-400 text-xs animate-pulse">
-                  …
+                <div className="max-w-[90%] bg-zinc-50 border border-zinc-200 rounded-xl overflow-hidden">
+                  {/* Header — collapsible toggle */}
+                  <button
+                    onClick={() => setTasksExpanded(!tasksExpanded)}
+                    className="flex items-center gap-2 w-full px-3 py-2 hover:bg-zinc-100 transition-colors cursor-pointer"
+                  >
+                    <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                    <span className="text-xs text-zinc-600 flex-1 text-left">
+                      {sendingPhase === 0 ? "分析指令…"
+                        : sendingPhase === 1 ? "规划任务…"
+                        : "绘制中…"}{" "}
+                      ({tasksProgress.filter((t) => t.status === "SUCCESS").length}/{tasksProgress.length})
+                    </span>
+                    <svg
+                      className={`w-3 h-3 text-zinc-300 transition-transform ${tasksExpanded ? "rotate-180" : ""}`}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {/* Task list */}
+                  {tasksExpanded && (
+                    <div className="border-t border-zinc-100 px-3 py-1.5 space-y-1">
+                      {tasksProgress.map((t) => (
+                        <div key={t.id} className="flex items-center gap-2 text-[11px]">
+                          <span className="shrink-0">
+                            {t.status === "SUCCESS"
+                              ? <span className="text-emerald-500">✓</span>
+                              : t.status === "FAILED"
+                              ? <span className="text-red-400">✗</span>
+                              : t.status === "RUNNING"
+                              ? <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                              : <span className="inline-block w-2 h-2 rounded-full bg-zinc-200" />}
+                          </span>
+                          <span className={
+                            t.status === "SUCCESS" ? "text-zinc-400 line-through"
+                            : t.status === "FAILED" ? "text-red-400"
+                            : t.status === "RUNNING" ? "text-zinc-600"
+                            : "text-zinc-300"
+                          }>
+                            {t.description}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── Sending indicator (no tasks yet) ── */}
+            {sending && tasksProgress.length === 0 && (
+              <div className="flex justify-start">
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl rounded-bl-md bg-zinc-100 text-zinc-400 text-xs">
+                  <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                  <span>
+                    {sendingPhase === 0 ? "分析指令…"
+                      : sendingPhase === 1 ? "规划任务…"
+                      : sendingPhase === 2 ? "绘制中…"
+                      : "处理中…"}
+                  </span>
                 </div>
               </div>
             )}
