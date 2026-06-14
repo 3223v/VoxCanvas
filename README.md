@@ -2,6 +2,9 @@
 
 一个基于 Next.js 16 的轻量级手绘绘图系统，支持语音输入（ASR）和自然语言指令驱动 AI 自动绘图。
 
+## 视频地址
+https://www.bilibili.com/video/BV1pvJP6eEJU/
+
 ## 快速开始
 
 ```bash
@@ -83,3 +86,8 @@ LLM_MODEL_NAME=deepseek-chat             # 模型名
 | vanvas/docs/shapes.md           | 各形状的渲染实现方式     |
 | vanvas/docs/how-it-works.md     | 系统工作原理详解       |
 
+## 例图
+
+![例图1](pics/1.png)
+![例图2](pics/2.svg)
+![例图1](pics/3.svg)
