@@ -16,10 +16,12 @@ function buildSystemPrompt(): string {
 根据用户的描述和画布上下文，为要创建的对象选择合适的样式。
 
 ## 可用形状
-- "rect": 矩形（流程步骤、输入框、实体）
-- "circle": 圆形（节点、状态）
-- "ellipse": 椭圆（数据库、存储、文件）
-- "diamond": 菱形（判断、条件分支）
+- "rect": 矩形（色块、面板、立方体的面）
+- "circle": 圆形（节点、端点）
+- "ellipse": 椭圆（数据库、花瓣）
+- "diamond": 菱形（判断节点）
+- "line": 线段（万能画笔——可构成星形、多边形、网格。需要明显的描边色和适中的宽度）
+- "text": 文字
 
 ## 可用填充样式（fillStyle）
 - "solid": 实色填充（适合强调、醒目对象）
@@ -30,20 +32,25 @@ function buildSystemPrompt(): string {
 - "zigzag": 锯齿
 
 ## 颜色规则
-- 使用柔和、协调的颜色，避免纯黑(#000000)纯白(#ffffff)
-- 描边(stroke)建议用深色，如 "#1a1a1a" 或 "#333333"
-- 填充(fill)建议用低饱和度的暖色或冷色
-- "醒目"/"强调"/"突出" → 高饱和度填充 + "solid" fillStyle + 较粗 strokeWidth(3-4)
-- "柔和"/"淡雅"/"朴素" → 低饱和度 + "hachure" fillStyle
-- "数据库"/"存储" → 用 "ellipse" 形状
-- "判断"/"条件"/"if" → 用 "diamond" 形状
-- "开始"/"结束" → 用 "circle" 或圆角感
-- 普通实体/步骤 → 用 "rect"
 
-## 手绘粗糙度
-- roughness: 0~2，默认 0.5
-- 越接近 0 越精确，越接近 2 越潦草
-- 大多数情况用 0.5~1.0
+放手发挥吧！这里的规则是指引，不是限制。
+
+- 描边: 深色 ("#1a1a1a", "#2c3e50")，描边要有存在感
+- 填充: 避开纯黑白即可，其余任意
+- line 类型: 描边要醒目 (粗 3-4px)，颜色有辨识度。星形用金色 "#e6a817"，网格用灰色 "#888"
+- "醒目" → 高饱和度 + solid + strokeWidth 3-4
+- "柔和" → 低饱和度 + hachure
+- "金色"/"黄色" → "#e6a817" 或 "#f0c040"
+- "银色"/"灰色" → "#999" 或 "#bbb"
+- 多对象时: 相邻对象用协调色系，不同类型用不同色区分
+
+## 形状选择
+- "数据库"/"存储" → ellipse
+- "判断"/"条件" → diamond
+- "开始"/"结束" → circle
+- "星形"/"多边形" → line（逐段连接）
+- 一般步骤 → rect
+- 没有明显语义 → 选你觉得最合适的！
 
 ## 视觉概念映射（重要！）
 
@@ -178,7 +185,7 @@ export async function createSubWorkflow(
 }
 
 function validateShape(shape: unknown): CreateSubWorkflowOutput["shape"] {
-  const valid = ["rect", "circle", "ellipse", "diamond"];
+  const valid = ["rect", "circle", "ellipse", "diamond", "line", "text"];
   if (typeof shape === "string" && valid.includes(shape)) {
     return shape as CreateSubWorkflowOutput["shape"];
   }

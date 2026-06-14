@@ -48,12 +48,14 @@ export interface ShapeStyle {
 }
 
 export interface CreateParams {
-  shape: "rect" | "circle" | "ellipse" | "diamond" | "text";
+  shape: "rect" | "circle" | "ellipse" | "diamond" | "text" | "line";
   x?: number;
   y?: number;
   w?: number;
   h?: number;
   label: string;
+  /** line 类型的点序列 [[x1,y1],[x2,y2],...] */
+  points?: number[][];
   style?: Partial<ShapeStyle>;
   /** 特殊视觉需求，由 CreateSubWorkflow 解析 */
   visualHint?: string;

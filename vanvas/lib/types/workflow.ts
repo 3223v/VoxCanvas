@@ -25,7 +25,7 @@ export interface CreateSubWorkflowInput {
 }
 
 export interface CreateSubWorkflowOutput {
-  shape: "rect" | "circle" | "ellipse" | "diamond";
+  shape: "rect" | "circle" | "ellipse" | "diamond" | "line" | "text";
   style: {
     fill: string;
     stroke: string;
