@@ -49,26 +49,28 @@ export async function createHandler(input: {
   });
 
   try {
-    // ── line 类型：用 points 定义，调子工作流取样式 ──────
-    if (params.shape === "line") {
+    // ── 线段类型：line / dashed / arrow / arc-arrow ──────
+    const lineTypes = ["line", "dashed", "arrow", "arc-arrow"];
+    if (lineTypes.includes(params.shape)) {
       const points = params.points ?? [[params.x ?? 400, params.y ?? 300], [(params.x ?? 400) + 100, params.y ?? 300]];
       const subResult = await createSubWorkflow(llm, {
         description: task.description,
-        shape: "line",
+        shape: params.shape,
         label: params.label,
         visualHint: params.visualHint,
         canvasState: context.canvasState,
       });
       const obj: DrawObject = {
         id: generateObjectId(),
-        type: "line",
+        type: params.shape as DrawObject["type"],
         points,
         stroke: subResult.style.stroke,
         strokeWidth: subResult.style.strokeWidth,
         roughness: subResult.style.roughness,
         seed: Math.floor(Math.random() * 100),
+        label: params.label || undefined,
       };
-      logger.info("CreateHandler 完成（线段）", { taskId: task.id, objectId: obj.id, pointCount: points.length });
+      logger.info("CreateHandler 完成（线段）", { taskId: task.id, objectId: obj.id, type: params.shape, pointCount: points.length });
       return { taskId: task.id, status: "SUCCESS", outputObject: obj };
     }
 

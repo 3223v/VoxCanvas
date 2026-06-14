@@ -16,12 +16,15 @@ function buildSystemPrompt(): string {
 根据用户的描述和画布上下文，为要创建的对象选择合适的样式。
 
 ## 可用形状
-- "rect": 矩形（色块、面板、立方体的面）
-- "circle": 圆形（节点、端点）
+- "rect": 矩形（色块、面板、立方体的面。用 x/y/w/h + fill）
+- "circle": 圆形（节点）。用 x/y/w/h，w=h
 - "ellipse": 椭圆（数据库、花瓣）
 - "diamond": 菱形（判断节点）
-- "line": 线段（万能画笔——可构成星形、多边形、网格。需要明显的描边色和适中的宽度）
-- "text": 文字
+- "line": 直线（万能画笔，用 points 定义端点。粗细 3-4px 更醒目）
+- "dashed": 虚线（辅助线、透视线、草稿。用 points 定义）
+- "arrow": 带箭头线（方向、流程。箭头自动在终点）
+- "arc-arrow": 弧线箭头（弯曲流程）
+- "text": 文字（用 label=内容，x/y 定位）
 
 ## 可用填充样式（fillStyle）
 - "solid": 实色填充（适合强调、醒目对象）
@@ -185,7 +188,7 @@ export async function createSubWorkflow(
 }
 
 function validateShape(shape: unknown): CreateSubWorkflowOutput["shape"] {
-  const valid = ["rect", "circle", "ellipse", "diamond", "line", "text"];
+  const valid = ["rect", "circle", "ellipse", "diamond", "line", "dashed", "arrow", "arc-arrow", "text"];
   if (typeof shape === "string" && valid.includes(shape)) {
     return shape as CreateSubWorkflowOutput["shape"];
   }

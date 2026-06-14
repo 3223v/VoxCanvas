@@ -48,7 +48,7 @@ export interface ShapeStyle {
 }
 
 export interface CreateParams {
-  shape: "rect" | "circle" | "ellipse" | "diamond" | "text" | "line";
+  shape: "rect" | "circle" | "ellipse" | "diamond" | "text" | "line" | "dashed" | "arrow" | "arc-arrow";
   x?: number;
   y?: number;
   w?: number;
