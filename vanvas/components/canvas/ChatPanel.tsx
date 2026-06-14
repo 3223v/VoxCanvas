@@ -25,6 +25,8 @@ export default function ChatPanel({ canvasId, onObjectsChange }: ChatPanelProps)
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [sending, setSending] = useState(false);
+  const [sendingPhase, setSendingPhase] = useState(0);
+  const sendingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const msgsRef = useRef<HTMLDivElement>(null);
@@ -106,6 +108,11 @@ export default function ChatPanel({ canvasId, onObjectsChange }: ChatPanelProps)
     const userMsg: Message = { role: "user", content: msg };
     setMessages((prev) => [...prev, userMsg]);
     setSending(true);
+    setSendingPhase(0);
+    // 每 4 秒切换到下一阶段提示
+    sendingTimerRef.current = setInterval(() => {
+      setSendingPhase((p) => p + 1);
+    }, 4000);
 
     try {
       if (canvasId) {
@@ -163,6 +170,10 @@ export default function ChatPanel({ canvasId, onObjectsChange }: ChatPanelProps)
       ]);
     } finally {
       setSending(false);
+      if (sendingTimerRef.current) {
+        clearInterval(sendingTimerRef.current);
+        sendingTimerRef.current = null;
+      }
     }
   };
 
@@ -245,8 +256,14 @@ export default function ChatPanel({ canvasId, onObjectsChange }: ChatPanelProps)
             )}
             {sending && (
               <div className="flex justify-start">
-                <div className="px-3 py-2 rounded-xl rounded-bl-md bg-zinc-100 text-zinc-400 text-xs animate-pulse">
-                  …
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl rounded-bl-md bg-zinc-100 text-zinc-400 text-xs">
+                  <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                  <span>
+                    {sendingPhase === 0 ? "分析指令…"
+                      : sendingPhase === 1 ? "规划任务…"
+                      : sendingPhase === 2 ? "绘制中…"
+                      : "处理中…"}
+                  </span>
                 </div>
               </div>
             )}
